@@ -1,0 +1,3 @@
+# >>> oci-assume >>>
+if (Get-Command oci-assume -ErrorAction SilentlyContinue) { oci-assume init pwsh | Out-String | Invoke-Expression }
+# <<< oci-assume <<<
