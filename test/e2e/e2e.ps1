@@ -160,12 +160,16 @@ function Step-AssertSetup {
     }
 }
 
+function Get-ProfileHashes { $script:Cfg.Profiles | ForEach-Object { if (Test-Path $_) { (Get-FileHash $_).Hash } else { '-' } } }
+
 function Step-SetupRerun {
+    $before = (Get-ProfileHashes) -join ','
     $out = OA setup --yes --no-oci-cli --no-login | Out-String
     $rc = $LASTEXITCODE
     Write-Host $out
     Check 'setup re-run exits 0' ($rc -eq 0)
     Check 'setup re-run: shell-hook already set up' ($out -match 'shell-hook already set up')
+    Check 'setup re-run left the profiles byte-identical' (((Get-ProfileHashes) -join ',') -eq $before)
     Check 'setup re-run: background already set up' ($out -match 'background already set up')
 }
 
@@ -201,6 +205,15 @@ oci-assume doctor | Out-File -Encoding utf8 $env:E2E_DOCTOR_OUT; "DOC=$LASTEXITC
 oci-assume e2e-key; "RC2=$LASTEXITCODE"
 "P2=$env:OCI_CLI_PROFILE"; "A2=$(U $env:OCI_CLI_AUTH)"
 '@
+
+# Runs $script in this edition with -NoProfile and no hook env: the CI step itself loaded $PROFILE.
+function Invoke-Unhooked($script) {
+    $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
+    $saved = @{ S = $env:OCI_ASSUME_SHELL; E = $env:OCI_ASSUME_EVAL }
+    Remove-Item Env:\OCI_ASSUME_SHELL, Env:\OCI_ASSUME_EVAL -ErrorAction SilentlyContinue
+    try { & (Get-Process -Id $PID).Path -NoLogo -NoProfile -EncodedCommand $enc 2>&1 | ForEach-Object { "$_" } }
+    finally { $env:OCI_ASSUME_SHELL = $saved.S; $env:OCI_ASSUME_EVAL = $saved.E }
+}
 
 # Starts a new shell that loads its profile, with the PATH a new terminal would get.
 function Invoke-NewShell($ps, $script) {
@@ -244,8 +257,11 @@ function Step-Commands {
     Check 'status lists e2e with its expiry' ($out -match '(?m)^e2e +us-ashburn-1 +\d+m')
     Check 'status lists e2e-key' ($out -match '(?m)^e2e-key +us-phoenix-1')
 
-    $doc = @(OA doctor)
-    Write-Host '--- doctor (no hook in this shell)'; $doc | ForEach-Object { Write-Host "     $_" }
+    $env:E2E_OA = Join-Path $script:Cfg.BinDir 'oci-assume.exe'
+    $env:E2E_DOCTOR_OUT = Join-Path $env:E2E_WORK 'doctor-unhooked.txt'
+    Invoke-Unhooked '& $env:E2E_OA doctor | Out-File -Encoding utf8 $env:E2E_DOCTOR_OUT' | ForEach-Object { Write-Host "     $_" }
+    $doc = @(if (Test-Path $env:E2E_DOCTOR_OUT) { Get-Content -Encoding UTF8 $env:E2E_DOCTOR_OUT })
+    Write-Host '--- doctor (child shell with -NoProfile, no hook)'; $doc | ForEach-Object { Write-Host "     $_" }
     Check "doctor without a hook reports 'shell hook not loaded'" (@($doc | Where-Object { $_ -like "$X shell hook not loaded*" }).Count -eq 1)
     Check 'doctor has no unexpected x-marks' (Test-DoctorMarks $doc (Get-DoctorAllowed $false))
 

@@ -224,3 +224,89 @@ func TestBinDirScoopShimCountsAsOnPath(t *testing.T) {
 		t.Fatal("non-scoop shims dir treated as on PATH")
 	}
 }
+
+// winSession fakes a Windows session: onSession is LookPath's view, registry the PATH a new shell gets.
+func winSession(e *Env, exe string, onSession bool, registry string) {
+	e.Executable = func() (string, error) { return exe, nil }
+	e.LookPath = func(name string) (string, error) {
+		if name == "oci-assume" && onSession {
+			return exe, nil
+		}
+		if name == "pwsh" || name == "powershell" {
+			return `C:\bin\` + name + ".exe", nil
+		}
+		return "", errors.New("not found")
+	}
+	e.NewShellPath = func() (string, error) { return registry, nil }
+}
+
+func TestHookPwshStableAcrossInstallerAndNewSession(t *testing.T) {
+	prof := filepath.Join(t.TempDir(), "profile.ps1")
+	e, _ := hookEnv(t, "windows", nil, map[string]string{"pwsh " + pwshArgs: prof + "\r\n"})
+	e.Shell = "pwsh"
+	dir := filepath.Join(t.TempDir(), "Programs", "oci-assume")
+	exe := filepath.Join(dir, "oci-assume.exe")
+	write(t, exe, "bin")
+	reg := `C:\Windows\system32;` + dir
+	// install.ps1 put dir in the user PATH and its own session; a later session only has the registry.
+	winSession(e, exe, true, reg)
+	apply(t, e)
+	first := read(t, prof)
+	if strings.Contains(first, "$env:Path") {
+		t.Fatalf("PATH line although the user PATH has the dir: %q", first)
+	}
+	winSession(e, exe, false, reg)
+	if done, err := NewHookStep().Done(e); !done || err != nil {
+		t.Fatalf("re-run in a new session not done: %v %v", done, err)
+	}
+	apply(t, e)
+	if got := read(t, prof); got != first {
+		t.Fatalf("re-run rewrote the profile:\n%q\n%q", first, got)
+	}
+}
+
+func TestHookPwshPathLineWhenOnlySessionHasDir(t *testing.T) {
+	prof := filepath.Join(t.TempDir(), "profile.ps1")
+	e, _ := hookEnv(t, "windows", nil, map[string]string{"pwsh " + pwshArgs: prof + "\r\n"})
+	e.Shell = "pwsh"
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "oci-assume.exe")
+	write(t, exe, "bin")
+	winSession(e, exe, true, `C:\Windows\system32`)
+	apply(t, e)
+	if got := read(t, prof); !strings.Contains(got, "$env:Path = ") {
+		t.Fatalf("no PATH line though new shells lack the dir: %q", got)
+	}
+	winSession(e, exe, false, `C:\Windows\system32`)
+	if done, _ := NewHookStep().Done(e); !done {
+		t.Fatal("not done in a new session")
+	}
+}
+
+func TestBinDirScoopShimInNewShellPath(t *testing.T) {
+	e, _ := hookEnv(t, "windows", nil, nil)
+	root := t.TempDir()
+	exe := filepath.Join(root, "scoop", "apps", "oci-assume", "current", "oci-assume.exe")
+	shims := filepath.Join(root, "scoop", "shims")
+	write(t, exe, "bin")
+	write(t, filepath.Join(shims, "oci-assume.exe"), "shim")
+	winSession(e, exe, false, `"`+shims+`";C:\x`)
+	if _, needed := BinDir(e); needed {
+		t.Fatal("scoop shim in the user PATH treated as not on PATH")
+	}
+}
+
+// On every OS, a PATH line written when needed stays once the session finds the binary.
+func TestHookPathLineStableAcrossSessions(t *testing.T) {
+	for _, goos := range []string{"linux", "darwin"} {
+		e, _ := hookEnv(t, goos, nil, nil)
+		e.Shell = "zsh"
+		dir := filepath.Join(e.Home, ".local", "bin")
+		withBinary(t, e, dir, "")
+		apply(t, e)
+		withBinary(t, e, dir, filepath.Join(dir, "oci-assume"))
+		if done, _ := NewHookStep().Done(e); !done {
+			t.Fatalf("%s: PATH line flip-flops in a session that finds the binary", goos)
+		}
+	}
+}

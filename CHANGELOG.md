@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-10-23
+
+### Fixed
+
+- Setup on Windows re-applied the PowerShell profile block on every run. It now decides whether the block needs a `PATH` line from the registry `PATH` a new terminal gets, not the current session, which `install.ps1` also patches.
+
 ## [1.1.0] - 2026-10-23
 
 One-command onboarding: install, then everything else is `oci-assume setup`.
@@ -50,6 +56,7 @@ One-command onboarding: install, then everything else is `oci-assume setup`.
 - Refusal to use token or key files readable by other users.
 - Releases for macOS, Linux and Windows (amd64 and arm64) through GitHub Releases, Homebrew, Scoop, winget manifests, `.deb`/`.rpm` and `install.sh`, with cosign-signed checksums and SBOMs.
 
-[Unreleased]: https://github.com/123yogin/oci-assume/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/123yogin/oci-assume/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/123yogin/oci-assume/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/123yogin/oci-assume/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/123yogin/oci-assume/releases/tag/v1.0.0
