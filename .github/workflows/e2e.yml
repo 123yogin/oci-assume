@@ -1,0 +1,301 @@
+name: e2e
+
+# Fresh-machine proof: GitHub-hosted runners are clean VMs, so each job installs a PUBLISHED
+# release the way a new user would and checks everything with test/e2e/e2e.{sh,ps1}.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release tag to test (vX.Y.Z) or "latest"
+        default: latest
+        type: string
+      channel:
+        description: Install channel to test
+        default: all
+        type: choice
+        options: [all, script, brew, scoop, go]
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+# A release event has no inputs, so `inputs.channel || 'all'` tests every channel.
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          tag=${RELEASE_TAG:-${INPUT_VERSION:-latest}}
+          if [ "$tag" = latest ]; then
+            tag=$(gh api repos/123yogin/oci-assume/releases/latest --jq .tag_name)
+          fi
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid tag: $tag"; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Testing $tag"
+
+  script-posix:
+    needs: resolve
+    if: contains(fromJSON('["all","script"]'), inputs.channel || 'all')
+    name: script ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-13 is retired; macos-15-intel is GitHub's remaining Intel macOS image.
+        os: [macos-14, macos-15-intel, ubuntu-24.04]
+    env:
+      E2E_VERSION: ${{ needs.resolve.outputs.tag }}
+      E2E_FAKE_SRC: ${{ github.workspace }}/tagsrc
+      E2E_SHELLS: ${{ startsWith(matrix.os, 'macos') && 'zsh bash' || 'bash' }}
+      E2E_ALLOW_LAUNCHD: '1'
+      E2E_ALLOW_SCHEDULER: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The fake oci is built from the tag under test, never from this branch.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          path: tagsrc
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tagsrc/go.mod
+      - name: 0 prepare (fake oci on PATH, ~/.oci/config, seeded token)
+        run: |
+          echo "E2E_WORK=$RUNNER_TEMP/e2e" >> "$GITHUB_ENV"
+          E2E_WORK="$RUNNER_TEMP/e2e" test/e2e/e2e.sh prepare
+      - name: 1 install (documented one-liner from the tag)
+        run: test/e2e/e2e.sh install
+      - name: 2 setup --yes (POSIX - installer handoff needs a TTY, CI has none; Windows - re-run after install.ps1)
+        if: ${{ !cancelled() }}
+        run: test/e2e/e2e.sh setup
+      - name: 3 assert setup results
+        if: ${{ !cancelled() }}
+        run: test/e2e/e2e.sh assert-setup
+      - name: 4 new interactive shell (hook, assume, prompt)
+        if: ${{ !cancelled() }}
+        run: test/e2e/e2e.sh shell
+      - name: 5 status, doctor, refresh, version
+        if: ${{ !cancelled() }}
+        run: test/e2e/e2e.sh commands
+      - name: 6 background job runs
+        if: ${{ !cancelled() }}
+        run: test/e2e/e2e.sh background
+      - name: 7 uninstall restores everything
+        if: ${{ !cancelled() }}
+        run: test/e2e/e2e.sh uninstall
+
+  script-windows:
+    needs: resolve
+    if: contains(fromJSON('["all","script"]'), inputs.channel || 'all')
+    name: script windows-2022 ${{ matrix.psh }}
+    runs-on: windows-2022
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows PowerShell 5.1 and PowerShell 7, each on its own fresh VM.
+        psh: [powershell, pwsh]
+    defaults:
+      run:
+        shell: ${{ matrix.psh }}
+    env:
+      E2E_VERSION: ${{ needs.resolve.outputs.tag }}
+      E2E_FAKE_SRC: ${{ github.workspace }}/tagsrc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          path: tagsrc
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tagsrc/go.mod
+      - name: 0 prepare (fake oci on PATH, ~/.oci/config, seeded token)
+        run: |
+          $env:E2E_WORK = Join-Path $env:RUNNER_TEMP 'e2e'
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "E2E_WORK=$env:E2E_WORK`n")
+          ./test/e2e/e2e.ps1 prepare
+      - name: 1 install (documented one-liner from the tag)
+        run: ./test/e2e/e2e.ps1 install
+      - name: 2 setup --yes (POSIX - installer handoff needs a TTY, CI has none; Windows - re-run after install.ps1)
+        if: ${{ !cancelled() }}
+        run: ./test/e2e/e2e.ps1 setup-rerun
+      - name: 3 assert setup results
+        if: ${{ !cancelled() }}
+        run: ./test/e2e/e2e.ps1 assert-setup
+      - name: 4 new interactive shell (hook, assume, prompt)
+        if: ${{ !cancelled() }}
+        run: ./test/e2e/e2e.ps1 shell
+      - name: 5 status, doctor, refresh, version
+        if: ${{ !cancelled() }}
+        run: ./test/e2e/e2e.ps1 commands
+      - name: 6 background job runs
+        if: ${{ !cancelled() }}
+        run: ./test/e2e/e2e.ps1 background
+      - name: 7 uninstall restores everything
+        if: ${{ !cancelled() }}
+        run: ./test/e2e/e2e.ps1 uninstall
+
+  brew:
+    needs: resolve
+    if: contains(fromJSON('["all","brew"]'), inputs.channel || 'all')
+    name: brew macos-14
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      # The tap carries only the newest cask, so this matches the tag only when testing the latest release.
+      E2E_VERSION: ${{ needs.resolve.outputs.tag }}
+      E2E_FAKE_SRC: ${{ github.workspace }}/tagsrc
+      E2E_CHANNEL: brew
+      E2E_SHELLS: zsh bash
+      E2E_ALLOW_LAUNCHD: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          path: tagsrc
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tagsrc/go.mod
+      - name: 0 prepare (fake oci on PATH, ~/.oci/config, seeded token)
+        run: |
+          echo "E2E_WORK=$RUNNER_TEMP/e2e" >> "$GITHUB_ENV"
+          E2E_WORK="$RUNNER_TEMP/e2e" test/e2e/e2e.sh prepare
+      - name: 1 install (brew install --cask 123yogin/tap/oci-assume)
+        run: test/e2e/e2e.sh install
+      - name: 2 setup --yes (POSIX - installer handoff needs a TTY, CI has none; Windows - re-run after install.ps1)
+        if: ${{ !cancelled() }}
+        run: test/e2e/e2e.sh setup
+      - name: 3 assert setup results
+        if: ${{ !cancelled() }}
+        run: test/e2e/e2e.sh assert-setup
+      - name: 4 new interactive shell (hook, assume, prompt)
+        if: ${{ !cancelled() }}
+        run: test/e2e/e2e.sh shell
+      - name: 5 status, doctor, refresh, version
+        if: ${{ !cancelled() }}
+        run: test/e2e/e2e.sh commands
+      - name: 8 brew uninstall --zap leaves no launchd agent
+        if: ${{ !cancelled() }}
+        run: test/e2e/e2e.sh zap
+
+  scoop:
+    needs: resolve
+    if: contains(fromJSON('["all","scoop"]'), inputs.channel || 'all')
+    name: scoop windows-2022
+    runs-on: windows-2022
+    timeout-minutes: 30
+    # The Scoop manifest may not be published yet; a failure here is reported, not fatal.
+    continue-on-error: true
+    env:
+      E2E_VERSION: ${{ needs.resolve.outputs.tag }}
+    steps:
+      - name: 0 prepare (install Scoop)
+        shell: pwsh
+        # The runner is an admin account, which Scoop's installer refuses without -RunAsAdmin.
+        run: |
+          iex "& {$(irm https://get.scoop.sh)} -RunAsAdmin"
+          [IO.File]::AppendAllText($env:GITHUB_PATH, "$env:USERPROFILE\scoop\shims`n")
+      - name: 1 install (scoop bucket add + scoop install)
+        shell: pwsh
+        run: |
+          scoop bucket add 123yogin https://github.com/123yogin/scoop-bucket
+          scoop install oci-assume
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: 5 status, doctor, refresh, version
+        shell: pwsh
+        run: |
+          $v = (oci-assume version | Out-String).Trim()
+          Write-Host $v
+          if (-not $v.StartsWith("oci-assume $($env:E2E_VERSION.Substring(1)) ")) { Write-Host "FAIL version is not $env:E2E_VERSION"; exit 1 }
+          Write-Host 'ok   version'
+
+  go-install:
+    needs: resolve
+    if: contains(fromJSON('["all","go"]'), inputs.channel || 'all')
+    name: go ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-24.04, windows-2022]
+    env:
+      E2E_VERSION: ${{ needs.resolve.outputs.tag }}
+    steps:
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+      - name: 1 install (go install @tag)
+        shell: pwsh
+        run: |
+          go install "github.com/123yogin/oci-assume/cmd/oci-assume@$env:E2E_VERSION"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: 5 status, doctor, refresh, version
+        shell: pwsh
+        run: |
+          $exe = Join-Path (Join-Path (go env GOPATH) 'bin') $(if ($IsWindows) { 'oci-assume.exe' } else { 'oci-assume' })
+          $v = (& $exe version | Out-String).Trim()
+          Write-Host $v
+          if (-not $v.StartsWith("oci-assume $env:E2E_VERSION ")) { Write-Host "FAIL version is not $env:E2E_VERSION"; exit 1 }
+          Write-Host 'ok   version'
+
+  summary:
+    needs: [resolve, script-posix, script-windows, brew, scoop, go-install]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Step x OS table
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/attempts/$ATTEMPT/jobs" --jq '.jobs[]' > jobs.json
+          {
+            echo "## oci-assume $TAG fresh-machine e2e"
+            echo
+            jq -rs '
+              def mark: {"success": "✅", "failure": "❌", "skipped": "➖", "cancelled": "⏹"}[. // ""] // "";
+              map(select(.name != "resolve" and .name != "summary")) as $jobs
+              | reduce ($jobs[].steps[].name | select(test("^[0-9] "))) as $n ([]; if any(.[]; . == $n) then . else . + [$n] end)
+              | sort as $rows
+              | ("| step | " + ($jobs | map(.name) | join(" | ")) + " |"),
+                ("|---|" + ($jobs | map("---|") | join(""))),
+                ($rows[] as $r
+                  | "| " + $r + " | "
+                    + ($jobs | map([.steps[] | select(.name == $r) | .conclusion | mark] | first // "") | join(" | "))
+                    + " |")
+            ' jobs.json
+            echo
+            echo "✅ passed · ❌ failed · ➖ skipped · blank: not part of that channel. Scoop is allowed to fail until its manifest is published."
+          } >> "$GITHUB_STEP_SUMMARY"

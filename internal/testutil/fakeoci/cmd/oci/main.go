@@ -29,6 +29,10 @@ func main() {
 		time.Sleep(30 * time.Second)
 		return
 	}
+	if len(args) == 1 && args[0] == "--version" {
+		fmt.Println("3.0.0-fake")
+		return
+	}
 	sub := ""
 	if len(args) >= 2 {
 		sub = args[0] + " " + args[1]
