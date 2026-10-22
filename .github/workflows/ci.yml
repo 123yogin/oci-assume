@@ -114,8 +114,10 @@ jobs:
           "$bin" daemon status | tee "$RUNNER_TEMP/status.txt"
           grep -q '^installed: yes$' "$RUNNER_TEMP/status.txt"
           if [ "$RUNNER_OS" = Linux ]; then
-            unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
-            if systemctl --user show-environment >/dev/null 2>&1; then
+            if mgr_env=$(systemctl --user show-environment 2>/dev/null); then
+              # The manager's XDG_CONFIG_HOME decides the unit dir, not the shell's.
+              mgr_xdg=$(printf '%s\n' "$mgr_env" | sed -n 's/^XDG_CONFIG_HOME=//p' | tail -n1)
+              unit_dir="${mgr_xdg:-$HOME/.config}/systemd/user"
               grep -qx "path: $unit_dir/oci-assume.timer" "$RUNNER_TEMP/status.txt"
               systemctl --user is-enabled oci-assume.timer
               systemctl --user is-active oci-assume.timer

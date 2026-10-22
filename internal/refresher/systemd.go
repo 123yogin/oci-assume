@@ -10,11 +10,20 @@ import (
 // systemd uses a user timer, or a crontab line when `systemctl --user` is unavailable.
 type systemd struct{ s *sys }
 
-func (d *systemd) dir() string { return filepath.Join(d.s.configDir, "systemd", "user") }
-
-func (d *systemd) available() bool {
-	_, err := d.s.exec("", "systemctl", "--user", "show-environment")
-	return err == nil
+// probe reports whether systemctl --user works and the unit dir the manager searches.
+// It follows the manager's XDG_CONFIG_HOME, not the shell's; without systemctl it uses the shell's.
+func (d *systemd) probe() (dir string, ok bool) {
+	out, err := d.s.exec("", "systemctl", "--user", "show-environment")
+	if err != nil {
+		return filepath.Join(d.s.configDir, "systemd", "user"), false
+	}
+	cfg := filepath.Join(d.s.home, ".config")
+	for _, l := range strings.Split(out, "\n") {
+		if v, found := strings.CutPrefix(strings.TrimSpace(l), "XDG_CONFIG_HOME="); found && v != "" {
+			cfg = v
+		}
+	}
+	return filepath.Join(cfg, "systemd", "user"), true
 }
 
 func (d *systemd) ctl(args ...string) error {
@@ -28,7 +37,8 @@ func (d *systemd) Install(bin string) error {
 	if err := validate("linux", bin, path, env); err != nil {
 		return err
 	}
-	if !d.available() {
+	dir, ok := d.probe()
+	if !ok {
 		return d.cronInstall(cronLine(bin, path, env))
 	}
 	files, err := render("linux", bin, path, d.s.home, env)
@@ -36,7 +46,7 @@ func (d *systemd) Install(bin string) error {
 		return err
 	}
 	for _, n := range []string{serviceName, timerName} {
-		if err := writeFile(filepath.Join(d.dir(), n), files[n], 0o644); err != nil {
+		if err := writeFile(filepath.Join(dir, n), files[n], 0o644); err != nil {
 			return err
 		}
 	}
@@ -51,16 +61,16 @@ func (d *systemd) Install(bin string) error {
 
 // Uninstall removes both the units (when present) and any cron marker line.
 func (d *systemd) Uninstall() error {
-	timer := filepath.Join(d.dir(), timerName)
-	if exists(timer) || exists(filepath.Join(d.dir(), serviceName)) {
-		avail := d.available()
+	dir, avail := d.probe()
+	timer := filepath.Join(dir, timerName)
+	if exists(timer) || exists(filepath.Join(dir, serviceName)) {
 		if avail && exists(timer) {
 			if err := d.ctl("disable", "--now", timerName); err != nil {
 				return err
 			}
 		}
 		for _, n := range []string{timerName, serviceName} {
-			if err := removeIfExists(filepath.Join(d.dir(), n)); err != nil {
+			if err := removeIfExists(filepath.Join(dir, n)); err != nil {
 				return err
 			}
 		}
@@ -75,8 +85,8 @@ func (d *systemd) Uninstall() error {
 
 func (d *systemd) Status() (Status, error) {
 	var st Status
-	if d.available() {
-		st.Path = filepath.Join(d.dir(), timerName)
+	if dir, ok := d.probe(); ok {
+		st.Path = filepath.Join(dir, timerName)
 		st.Installed = exists(st.Path) && d.ctl("is-enabled", timerName) == nil
 	} else {
 		st.Path = "crontab"

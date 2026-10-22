@@ -445,7 +445,7 @@ func TestSystemdUninstall(t *testing.T) {
 	if err := sd.Uninstall(); err != nil {
 		t.Fatal(err)
 	}
-	eq(t, f.calls, []string{"crontab -l"})
+	eq(t, f.calls, []string{"systemctl --user show-environment", "crontab -l"})
 }
 
 func TestSystemdStatus(t *testing.T) {
@@ -518,8 +518,8 @@ func TestCronFallbackUninstallKeepsOthers(t *testing.T) {
 	if err := sd.Uninstall(); err != nil {
 		t.Fatal(err)
 	}
-	eq(t, f.calls, []string{"crontab -l", "crontab -"})
-	if f.stdins[1] != otherCron {
+	eq(t, f.calls, []string{"systemctl --user show-environment", "crontab -l", "crontab -"})
+	if f.stdins[2] != otherCron {
 		t.Fatalf("got %q", f.stdins[1])
 	}
 	// No marker: nothing is rewritten.
@@ -527,14 +527,14 @@ func TestCronFallbackUninstallKeepsOthers(t *testing.T) {
 	if err := sd.Uninstall(); err != nil {
 		t.Fatal(err)
 	}
-	eq(t, f.calls, []string{"crontab -l"})
+	eq(t, f.calls, []string{"systemctl --user show-environment", "crontab -l"})
 	// busybox wording and a missing binary both mean nothing to remove.
 	for _, e := range []error{errors.New("crontab: can't open 'user': No such file"), fmt.Errorf("x: %w", exec.ErrNotFound)} {
 		f.calls, f.rules = nil, []rule{{"crontab -l", "", e}}
 		if err := sd.Uninstall(); err != nil {
 			t.Fatalf("%v: %v", e, err)
 		}
-		eq(t, f.calls, []string{"crontab -l"})
+		eq(t, f.calls, []string{"systemctl --user show-environment", "crontab -l"})
 	}
 }
 
@@ -543,7 +543,7 @@ func TestCronReadErrorNotOverwritten(t *testing.T) {
 	if err := (&systemd{testSys(t, f, nil)}).Uninstall(); err == nil {
 		t.Fatal("want error")
 	}
-	eq(t, f.calls, []string{"crontab -l"})
+	eq(t, f.calls, []string{"systemctl --user show-environment", "crontab -l"})
 }
 
 // busybox "can't open" without "no such file" (e.g. permission denied) must never clobber the table.
@@ -574,8 +574,8 @@ func TestUninstallCronWhileSystemdAvailable(t *testing.T) {
 	if err := (&systemd{testSys(t, f, nil)}).Uninstall(); err != nil {
 		t.Fatal(err)
 	}
-	eq(t, f.calls, []string{"crontab -l", "crontab -"})
-	if f.stdins[1] != otherCron {
+	eq(t, f.calls, []string{"systemctl --user show-environment", "crontab -l", "crontab -"})
+	if f.stdins[2] != otherCron {
 		t.Fatalf("got %q", f.stdins[1])
 	}
 }
@@ -665,5 +665,59 @@ func TestForOS(t *testing.T) {
 	}
 	if _, err := ForOS("plan9"); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("plan9: %v", err)
+	}
+}
+
+// The unit dir comes from the systemd manager's environment, not the shell's.
+func TestSystemdUnitsFollowManagerXDG(t *testing.T) {
+	x := t.TempDir()
+	f := &fakeExec{rules: []rule{{"systemctl --user show-environment", "HOME=/h\nXDG_CONFIG_HOME=" + x + "\n", nil}}}
+	s := testSys(t, f, nil)
+	if err := (&systemd{s}).Install(testBin); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(filepath.Join(x, "systemd", "user", timerName)) {
+		t.Fatalf("timer not under manager XDG %s", x)
+	}
+	if exists(filepath.Join(s.home, ".config", "systemd")) {
+		t.Fatal("units also written under $HOME/.config")
+	}
+}
+
+func TestSystemdUnitsIgnoreShellXDG(t *testing.T) {
+	shell := t.TempDir()
+	f := &fakeExec{rules: []rule{{"systemctl --user show-environment", "HOME=/h\nPATH=/bin\n", nil}}}
+	s := testSys(t, f, nil)
+	s.configDir = shell
+	s.getenv = func(k string) string { return map[string]string{"PATH": testPath, "XDG_CONFIG_HOME": shell}[k] }
+	sd := &systemd{s}
+	if err := sd.Install(testBin); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(filepath.Join(s.home, ".config", "systemd", "user", timerName)) {
+		t.Fatal("timer not under $HOME/.config")
+	}
+	if exists(filepath.Join(shell, "systemd")) {
+		t.Fatal("units written under the shell XDG_CONFIG_HOME")
+	}
+	if st, err := sd.Status(); err != nil || st.Path != filepath.Join(s.home, ".config", "systemd", "user", timerName) {
+		t.Fatalf("%+v %v", st, err)
+	}
+}
+
+func TestSystemdUninstallUsesManagerXDG(t *testing.T) {
+	x := t.TempDir()
+	f := &fakeExec{rules: []rule{{"systemctl --user show-environment", "XDG_CONFIG_HOME=" + x + "\n", nil}}}
+	sd := &systemd{testSys(t, f, nil)}
+	if err := sd.Install(testBin); err != nil {
+		t.Fatal(err)
+	}
+	if err := sd.Uninstall(); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{serviceName, timerName} {
+		if exists(filepath.Join(x, "systemd", "user", n)) {
+			t.Fatalf("%s left", n)
+		}
 	}
 }
