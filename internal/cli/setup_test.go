@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -143,5 +144,18 @@ func TestUninstallCommand(t *testing.T) {
 	}
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatalf("purge kept state dir: %v", err)
+	}
+}
+
+func TestSetupEnvCarriesCommandContext(t *testing.T) {
+	e := setup(t, "ok")
+	var got context.Context
+	d := e.deps()
+	d.setupSteps = func(se *onboard.Env) []onboard.Step { got = se.Context(); return nil }
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	run(ctx, d, []string{"setup", "--dry-run"})
+	if got == nil || got.Err() == nil {
+		t.Fatalf("Env.Ctx is not the command context: %v", got)
 	}
 }

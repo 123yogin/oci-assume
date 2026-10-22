@@ -2,6 +2,7 @@ package setup
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -17,20 +18,26 @@ type fakeStep struct {
 	done     bool
 	tty      bool
 	applyErr error
+	undoErr  error
 	log      *[]string
 }
 
-func (f *fakeStep) ID() string                    { return f.id }
-func (f *fakeStep) Describe(*Env) string          { return "do " + f.id }
-func (f *fakeStep) Done(*Env) (bool, error)       { return f.done, nil }
-func (f *fakeStep) NeedsTTY() bool                { return f.tty }
-func (f *fakeStep) Undo(_ *Env, _ *Receipt) error { *f.log = append(*f.log, "undo "+f.id); return nil }
+func (f *fakeStep) ID() string              { return f.id }
+func (f *fakeStep) Describe(*Env) string    { return "do " + f.id }
+func (f *fakeStep) Done(*Env) (bool, error) { return f.done, nil }
+func (f *fakeStep) NeedsTTY() bool          { return f.tty }
+func (f *fakeStep) Undo(_ *Env, _ *Receipt) error {
+	*f.log = append(*f.log, "undo "+f.id)
+	return f.undoErr
+}
+
+// Apply records its file before failing, like a partial apply.
 func (f *fakeStep) Apply(_ *Env, r *Receipt) error {
+	r.Files = append(r.Files, FileEntry{Path: "/x/" + f.id, Kind: "block"})
 	if f.applyErr != nil {
 		return f.applyErr
 	}
 	*f.log = append(*f.log, "apply "+f.id)
-	r.Files = append(r.Files, FileEntry{Path: "/x/" + f.id, Kind: "block"})
 	return nil
 }
 
@@ -126,11 +133,11 @@ func TestRunDryRunNoApply(t *testing.T) {
 func TestRunNonInteractiveNeedsYes(t *testing.T) {
 	e, out := testEnv(t, "y\n", false)
 	var log []string
-	applied, err := Run(e, steps(&log, "a"), Options{})
+	applied, err := Run(e, steps(&log, "shell-hook"), Options{})
 	if !errors.Is(err, ErrNeedsYes) || len(applied) != 0 || len(log) != 0 {
 		t.Fatalf("applied %v log %v err %v", applied, log, err)
 	}
-	if o := out.String(); !strings.Contains(o, "do a") || strings.Contains(o, "Done.") {
+	if o := out.String(); !strings.Contains(o, "do shell-hook") || strings.Contains(o, "Done.") {
 		t.Fatalf("plan not printed: %q", o)
 	}
 }
@@ -148,7 +155,7 @@ func TestRunNeedsTTYSkippedNonInteractive(t *testing.T) {
 	}
 }
 
-func TestRunApplyErrorStops(t *testing.T) {
+func TestRunApplyErrorSavesPartialReceipt(t *testing.T) {
 	e, _ := testEnv(t, "", true)
 	var log []string
 	s := []Step{&fakeStep{id: "a", log: &log}, &fakeStep{id: "b", applyErr: errors.New("boom"), log: &log}, &fakeStep{id: "c", log: &log}}
@@ -156,8 +163,143 @@ func TestRunApplyErrorStops(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "b: boom") || !reflect.DeepEqual(applied, []string{"a"}) {
 		t.Fatalf("applied %v err %v", applied, err)
 	}
-	if r, _ := LoadReceipt(e.StateDir); len(r.Files) != 1 {
-		t.Fatalf("receipt not saved after a: %+v", r)
+	r, _ := LoadReceipt(e.StateDir)
+	if len(r.Files) != 2 || r.Files[1].Path != "/x/b" {
+		t.Fatalf("partial apply of b not recorded: %+v", r)
+	}
+}
+
+func TestRunNonInteractiveYesOnlyShellAndBackground(t *testing.T) {
+	e, out := testEnv(t, "", false)
+	var log []string
+	applied, err := Run(e, steps(&log, "a", "shell-hook", "background"), Options{Yes: true})
+	if err != nil || !reflect.DeepEqual(applied, []string{"shell-hook", "background"}) {
+		t.Fatalf("applied %v err %v", applied, err)
+	}
+	if o := out.String(); !strings.Contains(o, "– a needs an interactive terminal; run oci-assume setup") {
+		t.Fatalf("output %q", o)
+	}
+}
+
+func TestRunAllDoneNonInteractiveSucceeds(t *testing.T) {
+	e, out := testEnv(t, "", false)
+	var log []string
+	s := []Step{&fakeStep{id: "shell-hook", done: true, log: &log}, &fakeStep{id: "oci-cli", done: true, tty: true, log: &log}}
+	if _, err := Run(e, s, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(out.String(), doneLine+"\n") {
+		t.Fatalf("output %q", out.String())
+	}
+}
+
+func TestRunNeedsTTYPromptsWhenInteractive(t *testing.T) {
+	e, out := testEnv(t, "\n", true)
+	var log []string
+	applied, err := Run(e, []Step{&fakeStep{id: "oci-cli", tty: true, log: &log}}, Options{})
+	if err != nil || !reflect.DeepEqual(applied, []string{"oci-cli"}) || !strings.Contains(out.String(), "do oci-cli [Y/n]") {
+		t.Fatalf("applied %v err %v out %q", applied, err, out.String())
+	}
+}
+
+func TestRunAllDeclinedNothingChanged(t *testing.T) {
+	e, out := testEnv(t, "n\n", true)
+	var log []string
+	if _, err := Run(e, steps(&log, "a"), Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if o := out.String(); !strings.HasSuffix(o, "Nothing changed.\n") || strings.Contains(o, "Done.") {
+		t.Fatalf("output %q", o)
+	}
+}
+
+func TestRunMixedListsDeclined(t *testing.T) {
+	e, out := testEnv(t, "y\nn\n", true)
+	var log []string
+	if _, err := Run(e, steps(&log, "a", "b"), Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if o := out.String(); !strings.Contains(o, "Declined: b") || !strings.HasSuffix(o, doneLine+"\n") {
+		t.Fatalf("output %q", o)
+	}
+}
+
+func writeCorrupt(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "receipt.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunCorruptReceiptSuggestsUninstall(t *testing.T) {
+	e, _ := testEnv(t, "", true)
+	writeCorrupt(t, e.StateDir)
+	var log []string
+	if _, err := Run(e, steps(&log, "a"), Options{Yes: true}); err == nil || !strings.Contains(err.Error(), "oci-assume uninstall") || len(log) != 0 {
+		t.Fatalf("err %v log %v", err, log)
+	}
+	if _, err := Run(e, steps(&log, "a"), Options{DryRun: true}); err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+}
+
+func TestUninstallCorruptReceiptWarnsAndProceeds(t *testing.T) {
+	e, out := testEnv(t, "", false)
+	writeCorrupt(t, e.StateDir)
+	var log []string
+	if err := Uninstall(e, steps(&log, "a", "b"), false); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(log, []string{"undo b", "undo a"}) || !strings.Contains(out.String(), "warning") {
+		t.Fatalf("log %v out %q", log, out.String())
+	}
+	if _, err := os.Stat(filepath.Join(e.StateDir, "receipt.json")); !os.IsNotExist(err) {
+		t.Fatalf("corrupt receipt kept: %v", err)
+	}
+}
+
+func TestUninstallUndoErrorKeepsReceiptAndSkipsPurge(t *testing.T) {
+	e, _ := testEnv(t, "", false)
+	if err := SaveReceipt(e.StateDir, Receipt{Version: "1"}); err != nil {
+		t.Fatal(err)
+	}
+	var log []string
+	s := []Step{&fakeStep{id: "a", log: &log}, &fakeStep{id: "b", undoErr: errors.New("busy"), log: &log}}
+	err := Uninstall(e, s, true)
+	if err == nil || !strings.Contains(err.Error(), "b: busy") || !reflect.DeepEqual(log, []string{"undo b", "undo a"}) {
+		t.Fatalf("err %v log %v", err, log)
+	}
+	if _, err := os.Stat(filepath.Join(e.StateDir, "receipt.json")); err != nil {
+		t.Fatalf("receipt not kept: %v", err)
+	}
+}
+
+func TestUninstallPurgeRefusesDangerousDirs(t *testing.T) {
+	e, _ := testEnv(t, "", false)
+	root := string(filepath.Separator)
+	if v := filepath.VolumeName(e.Home); v != "" {
+		root = v + root
+	}
+	for _, dir := range []string{e.Home, e.Home + string(filepath.Separator), root} {
+		e.StateDir = dir
+		var log []string
+		if err := Uninstall(e, steps(&log, "a"), true); err == nil || !strings.Contains(err.Error(), "refusing") || len(log) != 0 {
+			t.Fatalf("%s: err %v log %v", dir, err, log)
+		}
+	}
+	if _, err := os.Stat(e.Home); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnvContextDefaults(t *testing.T) {
+	if (&Env{}).Context() == nil {
+		t.Fatal("nil context")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if (&Env{Ctx: ctx}).Context().Err() == nil {
+		t.Fatal("Ctx not used")
 	}
 }
 

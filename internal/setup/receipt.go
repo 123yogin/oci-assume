@@ -15,6 +15,9 @@ const receiptVersion = "1"
 
 const receiptFile = "receipt.json"
 
+// errCorruptReceipt marks a receipt that exists but cannot be parsed.
+var errCorruptReceipt = errors.New("corrupt receipt")
+
 // Receipt records what setup changed; it is the source of truth for uninstall and self-heal.
 type Receipt struct {
 	Version    string           `json:"version"`
@@ -48,7 +51,7 @@ func LoadReceipt(stateDir string) (Receipt, error) {
 	}
 	var r Receipt
 	if err := json.Unmarshal(b, &r); err != nil {
-		return Receipt{}, fmt.Errorf("parse %s: %w", f, err)
+		return Receipt{}, fmt.Errorf("%w %s: %w", errCorruptReceipt, f, err)
 	}
 	return r, nil
 }

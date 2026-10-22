@@ -25,6 +25,15 @@ type Env struct {
 	LookPath                    func(string) (string, error)
 	Getenv                      func(string) string
 	Now                         func() time.Time
+	Ctx                         context.Context // steps use e.Context() for Exec/ExecTTY
+}
+
+// Context returns e.Ctx, or context.Background() when unset.
+func (e *Env) Context() context.Context {
+	if e.Ctx == nil {
+		return context.Background()
+	}
+	return e.Ctx
 }
 
 // Step is one reversible onboarding action.
@@ -49,6 +58,9 @@ var ErrNeedsYes = errors.New("not running interactively; re-run with --yes to ap
 // ErrSkipped, wrapped as "skipped: <reason>", is a non-fatal Apply result; Run reports it and continues.
 var ErrSkipped = errors.New("skipped")
 
+// skipper is an optional Step method: a non-empty reason skips a pending step without prompting.
+type skipper interface{ SkipReason(e *Env) string }
+
 const doneLine = "Done. Open a new terminal, then run: oci-assume"
 
 // DefaultSteps returns the steps in order: oci-cli, exec-policy (windows), shell-hook, background, first-login.
@@ -60,11 +72,17 @@ func DefaultSteps(e *Env) []Step {
 	return append(s, NewHookStep(), NewBackgroundStep(), NewLoginStep())
 }
 
+// nonTTYSteps are the only steps a non-interactive --yes run applies.
+var nonTTYSteps = map[string]bool{"shell-hook": true, "background": true}
+
 // Run walks steps, prompting for each pending one, and saves the receipt after every Apply.
 func Run(e *Env, steps []Step, o Options) (applied []string, err error) {
 	r, err := LoadReceipt(e.StateDir)
 	if err != nil {
-		return nil, err
+		if !errors.Is(err, errCorruptReceipt) || !o.DryRun {
+			return nil, receiptHint(err)
+		}
+		r = Receipt{}
 	}
 	planOnly := o.DryRun || (!e.Interactive && !o.Yes)
 	var in io.Reader = strings.NewReader("")
@@ -72,7 +90,8 @@ func Run(e *Env, steps []Step, o Options) (applied []string, err error) {
 		in = e.In
 	}
 	br := bufio.NewReader(in)
-	pending := false
+	var declined []string
+	pending, unapplied := false, false
 	for _, s := range steps {
 		id := s.ID()
 		if o.Skip[id] {
@@ -87,8 +106,16 @@ func Run(e *Env, steps []Step, o Options) (applied []string, err error) {
 			fmt.Fprintf(e.Out, "✓ %s already set up\n", id)
 			continue
 		}
-		if s.NeedsTTY() && !e.Interactive {
+		if sk, ok := s.(skipper); ok {
+			if why := sk.SkipReason(e); why != "" {
+				fmt.Fprintf(e.Out, "– %s skipped: %s\n", id, why)
+				unapplied = true
+				continue
+			}
+		}
+		if !e.Interactive && !o.DryRun && (s.NeedsTTY() || !nonTTYSteps[id]) {
 			fmt.Fprintf(e.Out, "– %s needs an interactive terminal; run oci-assume setup\n", id)
+			unapplied = true
 			continue
 		}
 		pending = true
@@ -102,18 +129,23 @@ func Run(e *Env, steps []Step, o Options) (applied []string, err error) {
 			fmt.Fprintf(e.Out, "%s [Y/n] ", desc)
 			if !confirm(br) {
 				fmt.Fprintf(e.Out, "– %s skipped\n", id)
+				declined = append(declined, id)
 				continue
 			}
 		}
-		if err := s.Apply(e, &r); errors.Is(err, ErrSkipped) {
-			fmt.Fprintf(e.Out, "– %s %v\n", id, err)
-			continue
-		} else if err != nil {
-			return applied, fmt.Errorf("%s: %w", id, err)
-		}
+		aerr := s.Apply(e, &r)
 		r.Version = receiptVersion
+		// Save even on failure: a partial Apply may have recorded what it changed.
 		if err := SaveReceipt(e.StateDir, r); err != nil {
-			return applied, fmt.Errorf("%s: save receipt: %w", id, err)
+			return applied, errors.Join(aerr, fmt.Errorf("%s: save receipt: %w", id, err))
+		}
+		if errors.Is(aerr, ErrSkipped) {
+			fmt.Fprintf(e.Out, "– %s %v\n", id, aerr)
+			unapplied = true
+			continue
+		}
+		if aerr != nil {
+			return applied, fmt.Errorf("%s: %w", id, aerr)
 		}
 		applied = append(applied, id)
 		fmt.Fprintf(e.Out, "✓ %s done\n", id)
@@ -124,8 +156,23 @@ func Run(e *Env, steps []Step, o Options) (applied []string, err error) {
 	if planOnly && pending {
 		return applied, ErrNeedsYes
 	}
+	if len(applied) == 0 && (len(declined) > 0 || unapplied) {
+		fmt.Fprintln(e.Out, "Nothing changed.")
+		return applied, nil
+	}
+	if len(declined) > 0 {
+		fmt.Fprintf(e.Out, "Declined: %s\n", strings.Join(declined, ", "))
+	}
 	fmt.Fprintln(e.Out, doneLine)
 	return applied, nil
+}
+
+// receiptHint points a corrupt receipt at uninstall, which resets it.
+func receiptHint(err error) error {
+	if errors.Is(err, errCorruptReceipt) {
+		return fmt.Errorf("%w; run oci-assume uninstall to reset it, then oci-assume setup", err)
+	}
+	return err
 }
 
 // confirm reads a [Y/n] answer; Enter means yes, EOF means no.
@@ -144,8 +191,16 @@ func confirm(br *bufio.Reader) bool {
 // Uninstall runs Undo in reverse order, then deletes the receipt; purge also removes the state dir and macOS log.
 // If any Undo fails, the updated receipt is kept so a re-run can retry.
 func Uninstall(e *Env, steps []Step, purge bool) error {
+	if purge {
+		if err := safeToPurge(e.StateDir, e.Home); err != nil {
+			return err
+		}
+	}
 	r, err := LoadReceipt(e.StateDir)
-	if err != nil {
+	if errors.Is(err, errCorruptReceipt) {
+		fmt.Fprintf(e.Out, "warning: %v; undoing every step without it\n", err)
+		r = Receipt{}
+	} else if err != nil {
 		return err
 	}
 	var errs []error
@@ -171,6 +226,15 @@ func Uninstall(e *Env, steps []Step, purge bool) error {
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
+	}
+	return nil
+}
+
+// safeToPurge refuses to delete home, a filesystem or volume root, or an empty path.
+func safeToPurge(dir, home string) error {
+	c := filepath.Clean(dir)
+	if dir == "" || c == "." || c == filepath.Dir(c) || c == filepath.VolumeName(c) || (home != "" && c == filepath.Clean(home)) {
+		return fmt.Errorf("refusing to purge state directory %q; remove it by hand", dir)
 	}
 	return nil
 }
