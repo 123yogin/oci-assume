@@ -1,0 +1,174 @@
+package setup
+
+import (
+	"errors"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/123yogin/oci-assume/internal/refresher"
+)
+
+// fakeBackend records calls; bin is what InstalledBin reports.
+type fakeBackend struct {
+	installed            bool
+	installs, uninstalls int
+	installBin, bin      string
+	installErr           error
+}
+
+func (f *fakeBackend) Install(bin string) error {
+	f.installs++
+	f.installBin = bin
+	if f.installErr != nil {
+		return f.installErr
+	}
+	f.installed, f.bin = true, bin
+	return nil
+}
+
+func (f *fakeBackend) Uninstall() error { f.uninstalls++; f.installed = false; return nil }
+
+func (f *fakeBackend) Status() (refresher.Status, error) {
+	return refresher.Status{Installed: f.installed, Path: "/fake/def"}, nil
+}
+
+func (f *fakeBackend) InstalledBin() (string, error) { return f.bin, nil }
+
+func bgEnv(t *testing.T) *Env {
+	t.Helper()
+	return &Env{GOOS: "darwin", Home: t.TempDir(), StateDir: t.TempDir(), Now: time.Now}
+}
+
+func testBgStep(b *fakeBackend) *backgroundStep {
+	return &backgroundStep{
+		backend: func(string) (refresher.Backend, error) { return b, nil },
+		bin:     func() (string, error) { return "/opt/bin/oci-assume", nil },
+	}
+}
+
+func TestBackgroundStepInstallsAndRecordsConsent(t *testing.T) {
+	e, b := bgEnv(t), &fakeBackend{}
+	s := testBgStep(b)
+	if s.ID() != "background" || s.NeedsTTY() {
+		t.Fatalf("id %q tty %v", s.ID(), s.NeedsTTY())
+	}
+	if !strings.Contains(s.Describe(e), "refresh --all --background") {
+		t.Fatalf("describe %q", s.Describe(e))
+	}
+	if done, err := s.Done(e); done || err != nil {
+		t.Fatalf("done before apply: %v %v", done, err)
+	}
+	var r Receipt
+	if err := s.Apply(e, &r); err != nil {
+		t.Fatal(err)
+	}
+	if b.installs != 1 || b.installBin != "/opt/bin/oci-assume" {
+		t.Fatalf("installs %d bin %q", b.installs, b.installBin)
+	}
+	if r.Background == nil || !r.Background.Consented || r.Background.Backend != "launchd" {
+		t.Fatalf("receipt %+v", r.Background)
+	}
+	if err := SaveReceipt(e.StateDir, r); err != nil {
+		t.Fatal(err)
+	}
+	if done, err := s.Done(e); !done || err != nil {
+		t.Fatalf("done after apply: %v %v", done, err)
+	}
+	// Installed but never consented (e.g. `daemon install`) is not done.
+	if err := SaveReceipt(e.StateDir, Receipt{}); err != nil {
+		t.Fatal(err)
+	}
+	if done, _ := s.Done(e); done {
+		t.Fatal("done without consent")
+	}
+}
+
+func TestBackgroundStepUndo(t *testing.T) {
+	e, b := bgEnv(t), &fakeBackend{}
+	s := testBgStep(b)
+	r := Receipt{}
+	if err := s.Apply(e, &r); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Undo(e, &r); err != nil {
+		t.Fatal(err)
+	}
+	if b.uninstalls != 1 || b.installed || r.Background != nil {
+		t.Fatalf("uninstalls %d installed %v receipt %+v", b.uninstalls, b.installed, r.Background)
+	}
+	// No receipt (setup never ran) still removes a scheduler entry; twice is safe.
+	if err := s.Undo(e, &Receipt{}); err != nil || b.uninstalls != 2 {
+		t.Fatalf("second undo: %v %d", err, b.uninstalls)
+	}
+}
+
+func TestBackgroundStepUnsupportedOS(t *testing.T) {
+	e := bgEnv(t)
+	s := &backgroundStep{
+		backend: func(string) (refresher.Backend, error) { return nil, refresher.ErrUnsupported },
+		bin:     func() (string, error) { return "/x", nil },
+	}
+	if done, err := s.Done(e); !done || err != nil {
+		t.Fatalf("unsupported should read as done: %v %v", done, err)
+	}
+	if err := s.Undo(e, &Receipt{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSelfHealOnlyWhenConsented(t *testing.T) {
+	e := bgEnv(t)
+	for _, r := range []Receipt{{}, {Background: &BackgroundEntry{Backend: "launchd", Consented: false}}} {
+		b := &fakeBackend{}
+		healed, err := SelfHeal(e, &r, b, "/opt/bin/oci-assume")
+		if healed || err != nil || b.installs != 0 || !r.LastHeal.IsZero() {
+			t.Fatalf("declined/absent consent healed: %v %v installs %d", healed, err, b.installs)
+		}
+	}
+	r := Receipt{Background: &BackgroundEntry{Backend: "launchd", Consented: true}}
+	b := &fakeBackend{}
+	healed, err := SelfHeal(e, &r, b, "/opt/bin/oci-assume")
+	if !healed || err != nil || b.installs != 1 || b.installBin != "/opt/bin/oci-assume" {
+		t.Fatalf("consented not healed: %v %v installs %d", healed, err, b.installs)
+	}
+	// Installed with an existing binary: nothing to do, even after the rate limit.
+	e.Now = func() time.Time { return time.Now().Add(time.Hour) }
+	b.bin = filepath.Join(t.TempDir())
+	if healed, err := SelfHeal(e, &r, b, "/opt/bin/oci-assume"); healed || err != nil || b.installs != 1 {
+		t.Fatalf("healthy reinstalled: %v %v %d", healed, err, b.installs)
+	}
+}
+
+func TestSelfHealWhenBinaryPathMissing(t *testing.T) {
+	e := bgEnv(t)
+	r := Receipt{Background: &BackgroundEntry{Backend: "launchd", Consented: true}}
+	b := &fakeBackend{installed: true, bin: filepath.Join(t.TempDir(), "gone", "oci-assume")}
+	healed, err := SelfHeal(e, &r, b, "/opt/bin/oci-assume")
+	if !healed || err != nil || b.installs != 1 || b.installBin != "/opt/bin/oci-assume" {
+		t.Fatalf("missing binary not healed: %v %v installs %d", healed, err, b.installs)
+	}
+}
+
+func TestSelfHealRateLimitedOnFailure(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	e := bgEnv(t)
+	e.Now = func() time.Time { return now }
+	r := Receipt{Background: &BackgroundEntry{Backend: "systemd", Consented: true}}
+	b := &fakeBackend{installErr: errors.New("no user bus")}
+	if healed, err := SelfHeal(e, &r, b, "/x"); healed || err == nil || b.installs != 1 {
+		t.Fatalf("first: %v %v %d", healed, err, b.installs)
+	}
+	if !r.LastHeal.Equal(now) {
+		t.Fatalf("LastHeal not stamped on failure: %v", r.LastHeal)
+	}
+	now = now.Add(9 * time.Minute)
+	if healed, err := SelfHeal(e, &r, b, "/x"); healed || err != nil || b.installs != 1 {
+		t.Fatalf("within 10m: %v %v %d", healed, err, b.installs)
+	}
+	now = now.Add(2 * time.Minute)
+	if _, err := SelfHeal(e, &r, b, "/x"); err == nil || b.installs != 2 {
+		t.Fatalf("after 10m: %v %d", err, b.installs)
+	}
+}

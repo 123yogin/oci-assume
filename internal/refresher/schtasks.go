@@ -9,8 +9,9 @@ import (
 type schtasks struct{ s *sys }
 
 // Install registers the task from a temporary UTF-16 XML file; /F makes reinstall idempotent.
+// It runs the windowless helper when one sits next to bin, then starts the task once.
 func (w *schtasks) Install(bin string) error {
-	files, err := render("windows", bin, w.s.getenv("PATH"), w.s.home, captureEnv(w.s.getenv))
+	files, err := renderUser("windows", helperFor(bin), w.s.getenv("PATH"), w.s.home, windowsUser(w.s.getenv), captureEnv(w.s.getenv))
 	if err != nil {
 		return err
 	}
@@ -26,8 +27,11 @@ func (w *schtasks) Install(bin string) error {
 		}
 		return cerr
 	}
-	_, err = w.s.exec("", "schtasks", "/Create", "/TN", TaskName, "/XML", f.Name(), "/F")
-	return err
+	if _, err = w.s.exec("", "schtasks", "/Create", "/TN", TaskName, "/XML", f.Name(), "/F"); err != nil {
+		return err
+	}
+	_, _ = w.s.exec("", "schtasks", "/Run", "/TN", TaskName) // best effort; the triggers cover a failure
+	return nil
 }
 
 func (w *schtasks) installed() bool {

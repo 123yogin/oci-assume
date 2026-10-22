@@ -21,7 +21,7 @@ type promptJSON struct {
 
 // newPrompt never errors and never builds an oci runner: it runs on every shell prompt.
 func newPrompt(d *deps) *cobra.Command {
-	var asJSON bool
+	var asJSON, tickFlag bool
 	cmd := &cobra.Command{
 		Use:   "prompt",
 		Short: "Print the active profile and session time left, for shell prompts",
@@ -51,13 +51,19 @@ func newPrompt(d *deps) *cobra.Command {
 			}
 			text, st := shell.Prompt(p.Name, rem, warn)
 			out := cmd.OutOrStdout()
+			var werr error
 			if asJSON {
-				return json.NewEncoder(out).Encode(promptJSON{p.Name, text, string(st), int64(rem / time.Second)})
+				werr = json.NewEncoder(out).Encode(promptJSON{p.Name, text, string(st), int64(rem / time.Second)})
+			} else {
+				fmt.Fprintln(out, text)
 			}
-			fmt.Fprintln(out, text)
-			return nil
+			if tickFlag && p.IsSession() && rem > 0 && rem < tickBelow {
+				tick(d, p.Name)
+			}
+			return werr
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
+	cmd.Flags().BoolVar(&tickFlag, "tick", false, "also start a detached refresh when under 45m remain (used by the shell hook)")
 	return cmd
 }

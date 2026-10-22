@@ -17,7 +17,7 @@ function oci-assume
 end
 
 function oci_assume_prompt
-    set -l p (command oci-assume prompt 2>/dev/null)
+    set -l p (command oci-assume prompt --tick 2>/dev/null)
     if test -n "$p"
         printf '[oci %s]' "$p"
     end
