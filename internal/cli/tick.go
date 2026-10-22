@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -28,7 +30,7 @@ func tick(d *deps, profile string) {
 	if err != nil {
 		return
 	}
-	stamp := filepath.Join(dir, "tick-"+sanitize(profile)+".stamp")
+	stamp := stampPath(dir, profile)
 	if fresh(d, stamp) {
 		return
 	}
@@ -71,6 +73,16 @@ func touch(path string, now time.Time) error {
 		return err
 	}
 	return os.Chtimes(path, now, now)
+}
+
+// stampPath names the tick stamp like lock.Path: a bounded sanitized prefix plus a hash of the raw name.
+func stampPath(dir, profile string) string {
+	clean := sanitize(profile)
+	if len(clean) > 100 {
+		clean = clean[:100]
+	}
+	sum := sha256.Sum256([]byte(profile))
+	return filepath.Join(dir, "tick-"+clean+"-"+hex.EncodeToString(sum[:4])+".stamp")
 }
 
 // sanitize keeps [A-Za-z0-9._-] and maps everything else to '_'.

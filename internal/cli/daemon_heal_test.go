@@ -82,7 +82,7 @@ func TestTickFutureStampIsStale(t *testing.T) {
 	var mu sync.Mutex
 	d := tickDeps(e, &spawned, &mu)
 	dir, _ := state.Dir()
-	stamp := filepath.Join(dir, "tick-dev.stamp")
+	stamp := stampPath(dir, "dev")
 	if err := touch(stamp, time.Now().Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}

@@ -231,7 +231,7 @@ func HookTargets(e *Env, sh string) ([]Target, error) {
 func hookTarget(e *Env, sh, path, kind string) Target {
 	wrap := func(body string) string {
 		if kind == "dropin" {
-			return fishHeader + body + "\n"
+			return block(fishHeader+body, "\n")
 		}
 		return body
 	}
@@ -682,16 +682,30 @@ func applyTarget(e *Env, t Target) error {
 		return nil
 	}
 	if t.Kind == "dropin" {
+		if exists && !managedDropin(s) {
+			return fmt.Errorf("%w: %s exists and isn't managed by oci-assume; add the hook line yourself:\n    %s",
+				ErrSkipped, tilde(e, t.Path), strings.ReplaceAll(strings.TrimRight(t.Content, "\n"), "\n", "\n    "))
+		}
 		return atomicWrite(real, next, 0o644)
 	}
 	return writeRC(t.Path, real, s, next, mode, exists)
 }
 
-// undoFile removes our blocks or the drop-in and deletes the backup; a file setup created is deleted
-// (emptied if it is a symlink). It returns what it did for the uninstall report, or "".
+// managedDropin reports whether s is only our marked block(s) plus whitespace.
+func managedDropin(s string) bool {
+	bs, err := blocks(s)
+	return err == nil && len(bs) > 0 && strings.TrimSpace(cut(s, bs, "")) == ""
+}
+
+// undoFile removes our blocks and deletes the backup; a file setup created, or a drop-in that is only
+// our block, is deleted (emptied if it is a symlink). It returns what it did for the uninstall report, or "".
 func undoFile(e *Env, f FileEntry) (string, error) {
 	if f.Kind == "dropin" {
-		return removeOrEmpty(e, f.Path)
+		if _, s, _, exists, err := readRC(f.Path); err != nil || !exists {
+			return "", err
+		} else if managedDropin(s) {
+			return removeOrEmpty(e, f.Path)
+		}
 	}
 	real, s, mode, exists, err := readRC(f.Path)
 	if err != nil || !exists {

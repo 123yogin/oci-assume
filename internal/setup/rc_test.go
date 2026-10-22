@@ -730,3 +730,65 @@ func TestUndoReportsLegacyLines(t *testing.T) {
 		t.Fatalf("output %q", out.String())
 	}
 }
+
+func fishDropin(e *Env) string {
+	return filepath.Join(e.Home, ".config", "fish", "conf.d", "oci-assume.fish")
+}
+
+func TestFishDropinUnmanagedSetupSkips(t *testing.T) {
+	e, _ := hookEnv(t, "linux", nil, nil)
+	e.Shell = "fish"
+	p := fishDropin(e)
+	mine := "oci-assume init fish | source\nset -gx FOO 1\n"
+	write(t, p, mine)
+	r := &Receipt{}
+	err := NewHookStep().Apply(e, r)
+	if !errors.Is(err, ErrSkipped) || !strings.Contains(err.Error(), "isn't managed by oci-assume") || !strings.Contains(err.Error(), hookLine("fish")) {
+		t.Fatalf("err %v", err)
+	}
+	if got := read(t, p); got != mine {
+		t.Fatalf("unmanaged drop-in changed: %q", got)
+	}
+	if len(r.Files) != 0 {
+		t.Fatalf("receipt recorded an unmanaged drop-in: %+v", r.Files)
+	}
+}
+
+func TestFishDropinManagedReplaced(t *testing.T) {
+	e, _ := hookEnv(t, "linux", nil, nil)
+	e.Shell = "fish"
+	p := fishDropin(e)
+	write(t, p, "\n"+block("# old generated body", "\n")+"\n")
+	apply(t, e)
+	golden(t, "fish", read(t, p))
+}
+
+func TestFishDropinUndoLeavesUnmarkedFile(t *testing.T) {
+	e, _ := hookEnv(t, "linux", nil, nil)
+	p := fishDropin(e)
+	mine := "if command -q oci-assume; oci-assume init fish | source; end\n"
+	write(t, p, mine)
+	r := &Receipt{Files: []FileEntry{{Path: p, Kind: "dropin"}}}
+	for _, rc := range []*Receipt{{}, r} {
+		if err := NewHookStep().Undo(e, rc); err != nil {
+			t.Fatal(err)
+		}
+		if got := read(t, p); got != mine {
+			t.Fatalf("unmarked drop-in touched: %q", got)
+		}
+	}
+}
+
+func TestFishDropinUndoKeepsUserLines(t *testing.T) {
+	e, _ := hookEnv(t, "linux", nil, nil)
+	e.Shell = "fish"
+	r := apply(t, e)
+	p := fishDropin(e)
+	write(t, p, read(t, p)+"set -gx MINE 1\n")
+	if err := NewHookStep().Undo(e, r); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, p); got != "set -gx MINE 1\n" {
+		t.Fatalf("got %q", got)
+	}
+}

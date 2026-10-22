@@ -67,7 +67,7 @@ func TestTickSpawnsOnceWithin5Min(t *testing.T) {
 		t.Fatalf("spawned %v", spawned)
 	}
 	dir, _ := state.Dir()
-	stamp := filepath.Join(dir, "tick-dev.stamp")
+	stamp := stampPath(dir, "dev")
 	old := time.Now().Add(-6 * time.Minute)
 	if err := os.Chtimes(stamp, old, old); err != nil {
 		t.Fatal(err)
@@ -209,5 +209,19 @@ func TestSelfHealHook(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(logf); !strings.Contains(string(b), "no user bus") {
 		t.Fatalf("log %q", b)
+	}
+}
+
+func TestStampPathDistinctAndBounded(t *testing.T) {
+	if a, b := stampPath("d", "a/b"), stampPath("d", "a?b"); a == b {
+		t.Fatalf("a/b and a?b share stamp %s", a)
+	}
+	long := strings.Repeat("x", 300)
+	p := stampPath(t.TempDir(), long)
+	if n := len(filepath.Base(p)); n > 255 {
+		t.Fatalf("stamp name is %d bytes", n)
+	}
+	if err := touch(p, time.Now()); err != nil {
+		t.Fatalf("300-char profile: %v", err)
 	}
 }

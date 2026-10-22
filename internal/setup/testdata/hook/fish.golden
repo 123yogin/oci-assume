@@ -1,2 +1,4 @@
+# >>> oci-assume >>>
 # Added by oci-assume setup; removed by oci-assume uninstall.
 if command -q oci-assume; oci-assume init fish | source; end
+# <<< oci-assume <<<
