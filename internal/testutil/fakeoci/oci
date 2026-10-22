@@ -16,6 +16,8 @@ write_token() {
 
 [ "$mode" = slow ] && exec sleep 30
 
+[ "${1:-}" = --version ] && { echo 3.0.0-fake; exit 0; }
+
 sub="$1 $2"
 case "$sub" in
   "session validate")
