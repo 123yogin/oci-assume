@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/123yogin/oci-assume/internal/ocicli"
 	"github.com/123yogin/oci-assume/internal/ociconfig"
 	"github.com/123yogin/oci-assume/internal/refresher"
+	onboard "github.com/123yogin/oci-assume/internal/setup"
 	"github.com/123yogin/oci-assume/internal/shell"
 	"github.com/123yogin/oci-assume/internal/state"
 )
@@ -37,13 +39,22 @@ func (c *checker) warn(check, fix string) { fmt.Fprintf(c.w, "! %s — fix: %s\n
 func newDoctor(d *deps) *cobra.Command {
 	return &cobra.Command{
 		Use:   "doctor",
-		Short: "Check the oci CLI, config, permissions, shell hook and daemon",
+		Short: "Check the oci CLI, config, permissions, shell hook, setup receipt and daemon",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c := &checker{w: cmd.OutOrStdout()}
+			e, err := setupEnv(cmd, d, "")
+			if err != nil {
+				return err
+			}
 			checkOCI(cmd.Context(), d, c)
 			checkConfig(d, c)
+			checkHookFile(e, c)
 			checkHook(d, c)
+			if d.goos == "windows" {
+				checkExecPolicy(d, e, c)
+			}
+			checkReceipt(e, c)
 			checkDaemon(d, c)
 			checkLastResult(d, c)
 			if c.failed {
@@ -131,6 +142,56 @@ func checkHook(d *deps, c *checker) {
 	c.fail("shell hook not loaded", hookHint(d.goos))
 }
 
+// checkHookFile looks for the block in the active hook's shell, else the detected one.
+func checkHookFile(e *onboard.Env, c *checker) {
+	sh := ""
+	if s, err := shell.Parse(os.Getenv("OCI_ASSUME_SHELL")); err == nil {
+		sh = string(s)
+	}
+	sh, missing, err := onboard.HookCheck(e, sh)
+	switch {
+	case onboard.IsNoShell(err):
+		c.warn(fmt.Sprintf("shell hook file: %v", err), "oci-assume setup --shell zsh|bash|fish|pwsh")
+	case err != nil:
+		c.fail(fmt.Sprintf("shell hook file: %v", err), "fix the file by hand, then oci-assume setup")
+	case len(missing) > 0:
+		c.fail("shell hook block missing from "+strings.Join(missing, ", "), "oci-assume setup")
+	default:
+		c.ok("shell hook in %s config", sh)
+	}
+}
+
+// checkExecPolicy: a blocking policy stops the PowerShell profile, so the hook never loads.
+func checkExecPolicy(d *deps, e *onboard.Env, c *checker) {
+	ok, why, err := d.execPolicy(e)
+	switch {
+	case err != nil:
+		c.warn(fmt.Sprintf("PowerShell execution policy unknown: %v", err), "Get-ExecutionPolicy -List")
+	case why != "":
+		c.warn(why, "ask your administrator")
+	case !ok:
+		c.fail("PowerShell execution policy blocks the profile", "Set-ExecutionPolicy RemoteSigned -Scope CurrentUser")
+	default:
+		c.ok("PowerShell execution policy allows the profile")
+	}
+}
+
+func checkReceipt(e *onboard.Env, c *checker) {
+	r, problems, err := onboard.ReceiptProblems(e)
+	switch {
+	case err != nil:
+		c.fail(fmt.Sprintf("receipt: %v", err), "oci-assume uninstall, then oci-assume setup")
+	case r.Version == "":
+		c.warn("setup has not been run", "oci-assume setup")
+	case len(problems) > 0:
+		for _, p := range problems {
+			c.fail("receipt: "+p, "oci-assume setup")
+		}
+	default:
+		c.ok("receipt matches %d file(s)", len(r.Files))
+	}
+}
+
 func checkDaemon(d *deps, c *checker) {
 	b, err := d.scheduler(d.goos)
 	if errors.Is(err, refresher.ErrUnsupported) {
@@ -145,12 +206,32 @@ func checkDaemon(d *deps, c *checker) {
 	st, err := b.Status()
 	switch {
 	case st.Installed:
+		if p := installedBin(b); p != "" {
+			c.fail(fmt.Sprintf("daemon runs %s, which does not exist", p), "oci-assume setup")
+			return
+		}
 		c.ok("daemon installed (%s)", st.Path)
 	case err != nil && !errors.Is(err, refresher.ErrLastRun):
-		c.fail(fmt.Sprintf("daemon not installed (%v)", err), "oci-assume daemon install")
+		c.fail(fmt.Sprintf("daemon not installed (%v)", err), "oci-assume setup")
 	default:
-		c.fail("daemon not installed", "oci-assume daemon install")
+		c.fail("daemon not installed", "oci-assume setup")
 	}
+}
+
+// installedBin returns the job's binary path when it no longer exists, else "".
+func installedBin(b refresher.Backend) string {
+	br, ok := b.(refresher.BinReporter)
+	if !ok {
+		return ""
+	}
+	p, err := br.InstalledBin()
+	if err != nil || p == "" {
+		return ""
+	}
+	if _, err := os.Stat(p); errors.Is(err, fs.ErrNotExist) {
+		return p
+	}
+	return ""
 }
 
 // checkLastResult only warns: a stale or failed background run is not a broken setup.
@@ -171,7 +252,7 @@ func checkLastResult(d *deps, c *checker) {
 	age := d.now().Sub(last.At)
 	switch {
 	case name == "":
-		c.warn("no last refresh recorded yet", "oci-assume daemon install")
+		c.warn("no last refresh recorded yet", "oci-assume setup")
 	case !last.OK:
 		c.warn(fmt.Sprintf("last refresh failed for %s (%s ago): %s", name, ago(age), last.Msg), assumeFix(name))
 	case age >= time.Hour:

@@ -35,6 +35,8 @@ func TestRenderGolden(t *testing.T) {
 	t.Setenv("PATH", testPath)
 	t.Setenv("HOME", "/home/user")
 	t.Setenv("USERPROFILE", "/home/user")
+	t.Setenv("USERDOMAIN", "CORP")
+	t.Setenv("USERNAME", "dev")
 	setCaptured(t, "/home/user/.oci/config", "/home/user/state", "/opt/oci/bin/oci")
 	for _, goos := range []string{"darwin", "linux", "windows"} {
 		files, err := Render(goos, testBin)
@@ -622,12 +624,12 @@ func TestRenderRejectsControlChars(t *testing.T) {
 func TestSchtasks(t *testing.T) {
 	f := &fakeExec{}
 	s := testSys(t, f, nil)
-	w := &schtasks{s}
+	w := &schtasks{s: s}
 	if err := w.Install(testBin); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.calls) != 1 || !strings.HasPrefix(f.calls[0], "schtasks /Create /TN "+TaskName+" /XML "+s.tmpDir) ||
-		!strings.HasSuffix(f.calls[0], " /F") {
+	if len(f.calls) != 2 || !strings.HasPrefix(f.calls[0], "schtasks /Create /TN "+TaskName+" /XML "+s.tmpDir) ||
+		!strings.HasSuffix(f.calls[0], " /F") || f.calls[1] != "schtasks /Run /TN "+TaskName {
 		t.Fatalf("calls %v", f.calls)
 	}
 	if left, _ := os.ReadDir(s.tmpDir); len(left) != 0 {

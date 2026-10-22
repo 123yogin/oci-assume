@@ -3,7 +3,7 @@ export OCI_ASSUME_SHELL=bash
 
 oci-assume() {
   case "${1:-}" in
-    status|refresh|login|prompt|daemon|init|doctor|version|help|completion|__complete|__completeNoDesc|--help|-h|--version)
+    status|refresh|login|prompt|daemon|init|doctor|setup|uninstall|version|help|completion|__complete|__completeNoDesc|--help|-h|--version)
       command oci-assume "$@"
       return $?
       ;;
@@ -19,7 +19,7 @@ oci-assume() {
 
 oci_assume_prompt() {
   local p
-  p="$(command oci-assume prompt 2>/dev/null)"
+  p="$(command oci-assume prompt --tick 2>/dev/null)"
   if [ -n "$p" ]; then
     printf '[oci %s]' "$p"
   fi

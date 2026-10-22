@@ -10,13 +10,27 @@ A child process cannot change its parent shell's environment. So `oci-assume ini
 
 The binary prints plain `export` / `unset` lines (or the fish and PowerShell equivalents), quoted for the target shell. The `init` output itself is static and contains no user data.
 
-Some subcommands are passed straight through to the binary without eval: `status`, `refresh`, `login`, `prompt`, `daemon`, `init`, `doctor`, `version`, `help`, `completion`, `--help`, `-h` and `--version`.
+Some subcommands are passed straight through to the binary without eval: `status`, `refresh`, `login`, `prompt`, `daemon`, `init`, `doctor`, `setup`, `uninstall`, `version`, `help`, `completion`, `--help`, `-h` and `--version`.
 
 The hook also defines a prompt helper (`oci_assume_prompt` in zsh, bash and fish; `OciAssumePrompt` in PowerShell). See [prompt.md](prompt.md).
 
+## Setup and the receipt
+
+`oci-assume setup` walks five steps in order: `oci-cli`, `exec-policy` (Windows only), `shell-hook`, `background` and `first-login`. Each step prints exactly what it will change (the file and the lines, or the command) and asks `[Y/n]`; a finished step prints `✓ already set up` and does not ask. Ctrl-C at a prompt stops setup with nothing further applied (exit 1).
+
+- **oci-cli:** `brew install oci-cli`, or on Windows `winget install --id Oracle.OCI-CLI -e --scope user`. On Linux without Homebrew it only prints Oracle's install command.
+- **exec-policy:** when PowerShell's effective policy is `Restricted` or `AllSigned`, offers `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser`. If Group Policy enforces it, setup explains and skips.
+- **shell-hook:** writes one guarded line between `# >>> oci-assume >>>` and `# <<< oci-assume <<<` in `${ZDOTDIR:-~}/.zshrc`, `~/.bashrc` (on macOS, `~/.bash_profile` is also made to source it), each PowerShell's `$PROFILE.CurrentUserAllHosts`, or the fish drop-in `~/.config/fish/conf.d/oci-assume.fish`. The shell comes from `--shell`, then the parent process, then `$SHELL`. A file that already has an unmarked `oci-assume init` line counts as done. If no shell is found, setup prints the line for every shell and changes nothing.
+- **background:** installs the scheduler job below.
+- **first-login:** when no profile has a `security_token_file`, asks for a profile name and region and runs `oci session authenticate`.
+
+Writes are atomic and keep the file's mode; a symlinked rc file is written through to its target. The first change to a file saves `<file>.oci-assume.bak`.
+
+`<state dir>/receipt.json` (mode 0600) records the files setup wrote, the background backend and whether you agreed to it, and how the OCI CLI was installed. `oci-assume uninstall` reads it to remove exactly the marked blocks and drop-ins, the background job and the receipt. Without a receipt (a v1.0 user, or a corrupt file) it scans the known startup files for markers and removes the job anyway. `--purge` also deletes the state directory and the macOS log.
+
 ## stdout and stderr
 
-- **stdout** carries only shell-evaluable lines on the assume and `--unset` paths, or command data for `prompt`, `status --json` and `init`.
+- **stdout** carries only shell-evaluable lines on the assume and `--unset` paths, or command data for `prompt`, `status --json` and `init`. `setup`, `uninstall` and `doctor` also print their report to stdout (stderr under `OCI_ASSUME_EVAL=1`).
 - **stderr** carries everything meant for a human: progress, errors and the fix command.
 
 `OCI_ASSUME_EVAL=1` is the guard. The hook sets it only on the eval path. When it is set, the binary routes all non-export stdout, such as `--help` text, to stderr, so nothing but export lines can reach `eval`.
@@ -62,17 +76,27 @@ There is no fallback to a shared temp directory. If neither is available (for ex
 
 ## Background scheduler
 
-`oci-assume daemon install` registers a job that runs `oci-assume refresh --all --background` every 30 minutes. It never opens a browser. If a session has expired it sends a desktop notification, at most once per profile per 24 hours.
+`setup` (or `oci-assume daemon install`) registers a job that runs `oci-assume refresh --all --background` every 30 minutes and once right away. It never opens a browser. If a session has expired it sends a desktop notification, at most once per profile per 24 hours.
 
 | OS | Mechanism |
 |---|---|
 | macOS | launchd agent `io.github.123yogin.oci-assume` in `~/Library/LaunchAgents`; log at `~/Library/Logs/oci-assume.log` |
 | Linux | systemd user timer `oci-assume.timer` (and `oci-assume.service`); falls back to a crontab line marked `# oci-assume` when `systemctl --user` is unavailable |
-| Windows | Task Scheduler task `oci-assume-refresh`, every 30 minutes |
+| Windows | Task Scheduler task `oci-assume-refresh`, every 30 minutes and at logon; it runs the windowless `oci-assume-bg.exe` next to `oci-assume.exe`, so no console window flashes. `go install` builds only `oci-assume.exe`, so the task runs it directly and a console window briefly flashes each run |
 
 The entry records `PATH`, plus `OCI_CLI_CONFIG_FILE`, `OCI_ASSUME_STATE_DIR` and `OCI_ASSUME_OCI_BIN` when they are set at install time, so the job sees the same config as your shell. Re-run `daemon install` after changing them. The cron line discards output; results go to the state file.
 
-`oci-assume daemon status` shows whether the job is installed and the last background result per profile (manual `refresh` runs are not listed). `oci-assume daemon uninstall` removes it.
+`oci-assume daemon status` shows whether the job is installed and the last background result per profile (manual `refresh` runs are not listed). `oci-assume daemon uninstall` removes it and records that you turned it off.
+
+On macOS, `brew upgrade` and `brew reinstall` leave the launchd agent alone; only `brew uninstall --zap` unloads it.
+
+### Self-heal
+
+If the receipt says you agreed to background refresh, every `oci-assume` command (except `prompt`, `init`, `setup`, `uninstall`, `daemon`, `doctor`, `version`, `help` and `completion`) checks the job. When it is missing, cannot be read, or points at a binary that no longer exists (for example after a moved or deleted install), the command reinstalls it silently. The check runs at most once per 10 minutes, and failures go to the log, never to your terminal. A job you declined or removed with `daemon uninstall` is never reinstalled.
+
+### Prompt tick
+
+The hook's prompt helper runs `oci-assume prompt --tick`. Its output is the same as `prompt`, but when the active profile is a session profile with less than 45 minutes left, it also starts a detached `oci-assume refresh <profile> --background` and returns at once. It starts at most one per profile every 5 minutes (a timestamp file in the state directory), skips when another refresh holds the profile's lock, and never runs `oci` in the prompt process. This keeps sessions alive while you work even where no scheduler is available. Only the hook's prompt helper (`oci_assume_prompt`, `OciAssumePrompt`) and prompts that call `oci-assume prompt --tick` themselves get the tick; plain `oci-assume prompt` never starts a refresh.
 
 Notifications use `osascript` (macOS), `notify-send` (Linux) or a PowerShell toast (Windows), and are skipped silently when none is available.
 

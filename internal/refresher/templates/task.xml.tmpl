@@ -12,6 +12,13 @@
         <StopAtDurationEnd>false</StopAtDurationEnd>
       </Repetition>
     </TimeTrigger>
+{{- if .User}}
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId>{{xml .User}}</UserId>
+      <Delay>PT1M</Delay>
+    </LogonTrigger>
+{{- end}}
   </Triggers>
   <Principals>
     <Principal id="Author">

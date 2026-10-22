@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/123yogin/oci-assume/internal/refresher"
+	onboard "github.com/123yogin/oci-assume/internal/setup"
 	"github.com/123yogin/oci-assume/internal/state"
 )
 
@@ -113,7 +114,106 @@ func healthy(t *testing.T) *env {
 	e.token(time.Hour)
 	e.backend.st = refresher.Status{Installed: true, Path: "/fake/agent.plist"}
 	saveResults(t, map[string]state.Result{"dev": {At: time.Now().Add(-10 * time.Minute), OK: true, Background: true}})
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("ZDOTDIR", "")
+	rc := filepath.Join(home, ".zshrc")
+	if err := os.WriteFile(rc, []byte("# >>> oci-assume >>>\n"+`command -v oci-assume >/dev/null && eval "$(oci-assume init zsh)"`+"\n# <<< oci-assume <<<\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeReceipt(t, onboard.Receipt{Version: "1", Files: []onboard.FileEntry{{Path: rc, Kind: "block"}},
+		Background: &onboard.BackgroundEntry{Backend: onboard.BackendName(runtime.GOOS), Consented: true}})
 	return e
+}
+
+func writeReceipt(t *testing.T, r onboard.Receipt) {
+	t.Helper()
+	if err := onboard.SaveReceipt(os.Getenv("OCI_ASSUME_STATE_DIR"), r); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// binBackend reports the binary path its installed definition runs.
+type binBackend struct {
+	*fakeBackend
+	bin string
+}
+
+func (b binBackend) InstalledBin() (string, error) { return b.bin, nil }
+
+func TestDoctorHookBlockMissing(t *testing.T) {
+	e := healthy(t)
+	rc := filepath.Join(os.Getenv("HOME"), ".zshrc")
+	if err := os.WriteFile(rc, []byte("# mine\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := e.run("doctor"); code != 1 {
+		t.Fatalf("exit %d", code)
+	}
+	out := e.stdout.String()
+	if !strings.Contains(out, "✗ shell hook block missing from "+rc+" — fix: oci-assume setup") ||
+		!strings.Contains(out, "✗ receipt: "+rc+" has no oci-assume block — fix: oci-assume setup") {
+		t.Fatalf("stdout:\n%s", out)
+	}
+}
+
+func TestDoctorReceiptCorrupt(t *testing.T) {
+	e := healthy(t)
+	if err := os.WriteFile(filepath.Join(os.Getenv("OCI_ASSUME_STATE_DIR"), "receipt.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := e.run("doctor"); code != 1 || !strings.Contains(e.stdout.String(), "✗ receipt:") ||
+		!strings.Contains(e.stdout.String(), "fix: oci-assume uninstall, then oci-assume setup") {
+		t.Fatalf("exit %d:\n%s", code, e.stdout.String())
+	}
+}
+
+func TestDoctorNoReceiptWarns(t *testing.T) {
+	e := healthy(t)
+	if err := os.Remove(filepath.Join(os.Getenv("OCI_ASSUME_STATE_DIR"), "receipt.json")); err != nil {
+		t.Fatal(err)
+	}
+	if code := e.run("doctor"); code != 0 || !strings.Contains(e.stdout.String(), "! setup has not been run — fix: oci-assume setup") {
+		t.Fatalf("exit %d:\n%s", code, e.stdout.String())
+	}
+}
+
+func TestDoctorDaemonBinaryMissing(t *testing.T) {
+	e := healthy(t)
+	d := e.deps()
+	gone := filepath.Join(t.TempDir(), "oci-assume")
+	d.scheduler = func(string) (refresher.Backend, error) { return binBackend{e.backend, gone}, nil }
+	if code := run(context.Background(), d, []string{"doctor"}); code != 1 ||
+		!strings.Contains(e.stdout.String(), "✗ daemon runs "+gone+", which does not exist — fix: oci-assume setup") {
+		t.Fatalf("exit %d:\n%s", code, e.stdout.String())
+	}
+}
+
+func TestDoctorExecPolicy(t *testing.T) {
+	e := healthy(t)
+	e.goos = "windows"
+	writeReceipt(t, onboard.Receipt{Version: "1", Background: &onboard.BackgroundEntry{Backend: onboard.BackendName("windows"), Consented: true}})
+	for _, c := range []struct {
+		ok   bool
+		why  string
+		err  error
+		want string
+		code int
+	}{
+		{true, "", nil, "✓ PowerShell execution policy allows the profile", 0},
+		{false, "", nil, "✗ PowerShell execution policy blocks the profile — fix: Set-ExecutionPolicy RemoteSigned -Scope CurrentUser", 1},
+		{false, "powershell is Restricted by Group Policy", nil, "! powershell is Restricted by Group Policy — fix: ask your administrator", 0},
+		{false, "", errors.New("boom"), "! PowerShell execution policy unknown: boom", 0},
+	} {
+		d := e.deps()
+		d.execPolicy = func(*onboard.Env) (bool, string, error) { return c.ok, c.why, c.err }
+		e.stdout.Reset()
+		code := run(context.Background(), d, []string{"doctor"})
+		if !strings.Contains(e.stdout.String(), c.want) || (c.code == 1) != (code == 1) {
+			t.Fatalf("exit %d want %q:\n%s", code, c.want, e.stdout.String())
+		}
+	}
 }
 
 func TestDoctorAllGood(t *testing.T) {
@@ -125,7 +225,7 @@ func TestDoctorAllGood(t *testing.T) {
 	if strings.Contains(out, "✗") || strings.Contains(out, "!") {
 		t.Fatalf("unexpected problem:\n%s", out)
 	}
-	for _, want := range []string{"✓ oci CLI", "oci 3.99.0", "✓ config", "✓ dev:", "✓ shell hook loaded (zsh)", "✓ daemon installed", "✓ last refresh"} {
+	for _, want := range []string{"✓ oci CLI", "oci 3.99.0", "✓ config", "✓ dev:", "✓ shell hook loaded (zsh)", "✓ daemon installed", "✓ last refresh", "✓ shell hook in ", "✓ receipt"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q:\n%s", want, out)
 		}
@@ -246,7 +346,7 @@ func TestDoctorDaemonAndResultWarnings(t *testing.T) {
 		t.Fatalf("exit %d", code)
 	}
 	out := e.stdout.String()
-	if !strings.Contains(out, "✗ daemon not installed — fix: oci-assume daemon install") {
+	if !strings.Contains(out, "✗ daemon not installed — fix: oci-assume setup") {
 		t.Fatalf("daemon line:\n%s", out)
 	}
 	if !strings.Contains(out, "! last refresh failed for prod-admin") || !strings.Contains(out, "fix: oci-assume login prod-admin") {

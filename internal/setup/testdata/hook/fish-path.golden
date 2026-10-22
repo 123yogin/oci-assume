@@ -1,0 +1,5 @@
+# >>> oci-assume >>>
+# Added by oci-assume setup; removed by oci-assume uninstall.
+fish_add_path -g "$HOME/.local/bin"
+if command -q oci-assume; oci-assume init fish | source; end
+# <<< oci-assume <<<

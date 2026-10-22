@@ -25,7 +25,7 @@
      checksums.txt
    ```
 
-6. Smoke test: `brew install --cask 123yogin/tap/oci-assume` and `oci-assume version`; `scoop bucket add 123yogin https://github.com/123yogin/scoop-bucket && scoop install oci-assume`.
+6. Smoke test: `brew install --cask 123yogin/tap/oci-assume` and `oci-assume version`; `scoop bucket add 123yogin https://github.com/123yogin/scoop-bucket && scoop install oci-assume`; `go install github.com/123yogin/oci-assume/cmd/oci-assume@<tag>` and `oci-assume version` shows the tag; the curl one-liner with `HOME` set to a temp dir and `--no-setup` (or `OCI_ASSUME_NO_SETUP=1`). launchd agents, systemd user units and scheduled tasks are per user, not per `HOME`, so a setup run under a temp `HOME` would replace your real background job. The `irm | iex` path is covered by the CI `windows-setup-smoke` job.
 
 ## winget
 
@@ -47,4 +47,9 @@ CI covers the fake `oci` and the scheduler commands. Check these by hand against
 - [ ] **Homebrew upgrade:** `brew install --cask 123yogin/tap/oci-assume`, `oci-assume daemon install`, upgrade to the next release, and confirm the job still runs (it points at `$(brew --prefix)/bin/oci-assume`, not the versioned Caskroom path).
 - [ ] **Signature:** run the cosign `verify-blob` command above against the first tag's `checksums.txt.sigstore.json`.
 - [ ] **Expired-session wording:** let a session expire and confirm the real `oci session refresh` / `validate` stderr contains "expired" or "not valid" (the patterns `internal/ocicli` maps to `ErrNeedsLogin`). Update the patterns if Oracle's wording differs.
+- [ ] **Fresh macOS user:** on a new macOS user account (no `~/.oci`, no Homebrew OCI CLI), run the curl one-liner, accept every step, open a new terminal and confirm `oci-assume` assumes the new profile and the prompt shows it. Then `oci-assume doctor` is all `✓`, and `oci-assume uninstall` leaves `~/.zshrc` byte-identical to before (`diff` against a copy).
+- [ ] **Windows 11 install:** in a fresh user session, run `irm https://raw.githubusercontent.com/123yogin/oci-assume/main/install.ps1 | iex`, accept every step, open a new PowerShell and confirm `oci-assume` works in both Windows PowerShell 5.1 and pwsh 7.
+- [ ] **Windows 11 no flash:** leave the session idle for at least 1 hour and confirm no console window flashes when the task runs (it runs `oci-assume-bg.exe`).
+- [ ] **Windows 11 reboot:** reboot, log in, and confirm `schtasks /Query /TN oci-assume-refresh /V /FO LIST` shows a run after logon and the profile's expiry advanced.
+- [ ] **Brew caveats:** `brew install --cask 123yogin/tap/oci-assume` prints "Run `oci-assume setup` to finish installing."
 - [ ] **Demo:** record `docs/demo.gif` with `vhs docs/demo.tape`, then add it back to the top of the README.

@@ -129,3 +129,21 @@ func TestDifferentProfilesIndependent(t *testing.T) {
 	}
 	r2()
 }
+
+func TestAcquireInUsesGivenDir(t *testing.T) {
+	t.Setenv("OCI_ASSUME_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
+	release, err := AcquireIn(context.Background(), dir, "\x00receipt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := AcquireIn(ctx, dir, "\x00receipt"); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("second holder: %v", err)
+	}
+	if ms, _ := filepath.Glob(filepath.Join(dir, "*.lock")); len(ms) != 1 {
+		t.Fatalf("lock files %v", ms)
+	}
+}

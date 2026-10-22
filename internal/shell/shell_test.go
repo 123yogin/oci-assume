@@ -327,3 +327,25 @@ func TestWrapperPassesCompletionThrough(t *testing.T) {
 		})
 	}
 }
+
+// setup and uninstall prompt on the terminal, so they must bypass eval.
+func TestWrappersPassThroughSetup(t *testing.T) {
+	for _, sh := range []Shell{Zsh, Bash, Pwsh, Fish} {
+		t.Run(string(sh), func(t *testing.T) {
+			shellBin(t, sh)
+			log := filepath.Join(t.TempDir(), "log")
+			script := "oci-assume setup; oci-assume uninstall"
+			out := runIn(t, sh, Init(sh)+"\n"+script, "PATH="+stubPath, "STUB_LOG="+log, "STUB_OUT=export X=1", "OCI_ASSUME_EVAL=")
+			b, err := os.ReadFile(log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if s := string(b); s != "setup=unset\nuninstall=unset\n" {
+				t.Fatalf("log %q", s)
+			}
+			if strings.Count(out, "export X=1") != 2 {
+				t.Fatalf("output was evaluated, not shown: %q", out)
+			}
+		})
+	}
+}

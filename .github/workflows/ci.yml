@@ -80,6 +80,23 @@ jobs:
           persist-credentials: false
       - run: make install-test
 
+  install-test-windows:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: install.ps1 (Windows PowerShell 5.1)
+        shell: powershell
+        run: .\test\install\test.ps1
+      - name: install.ps1 (PowerShell 7)
+        shell: pwsh
+        run: ./test/install/test.ps1
+
   scheduler-smoke:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
@@ -141,6 +158,52 @@ jobs:
               echo "cron line left"; exit 1
             fi
           fi
+
+  windows-task-smoke:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Register, query and delete the rendered task XML
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $xml = Join-Path $env:RUNNER_TEMP 'task.xml'
+          go run ./internal/testutil/rendertask -bin "$env:RUNNER_TEMP\oci-assume-bg.exe" -out $xml
+          if ($LASTEXITCODE -ne 0) { throw 'render failed' }
+          $name = "oci-assume-ci-$env:GITHUB_RUN_ID"
+          schtasks /Create /TN $name /XML $xml /F
+          if ($LASTEXITCODE -ne 0) { throw 'schtasks /Create failed' }
+          try {
+            $out = schtasks /Query /TN $name /XML | Out-String
+            if ($LASTEXITCODE -ne 0) { throw 'schtasks /Query failed' }
+            if ($out -notmatch '<LogonTrigger>') { throw "no logon trigger:`n$out" }
+          } finally {
+            schtasks /Delete /TN $name /F
+          }
+
+  windows-setup-smoke:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          version: v2.18.3
+          args: build --snapshot --clean --single-target
+      - name: install.ps1, setup and uninstall against the snapshot
+        shell: pwsh
+        run: ./test/install/setup-smoke.ps1 -Dist dist
 
   goreleaser-check:
     runs-on: ubuntu-24.04

@@ -14,11 +14,25 @@ builds:
     ldflags:
       - -s -w -X github.com/123yogin/oci-assume/internal/cli.Version={{.Version}} -X github.com/123yogin/oci-assume/internal/cli.Commit={{.Commit}} -X github.com/123yogin/oci-assume/internal/cli.Date={{.Date}}
 
+  - id: oci-assume-bg
+    main: ./cmd/oci-assume-bg
+    binary: oci-assume-bg
+    env:
+      - CGO_ENABLED=0
+    goos: [windows]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -H=windowsgui -X github.com/123yogin/oci-assume/internal/cli.Version={{.Version}} -X github.com/123yogin/oci-assume/internal/cli.Commit={{.Commit}} -X github.com/123yogin/oci-assume/internal/cli.Date={{.Date}}
+
 archives:
   - id: default
     # Must match archive= in install.sh.
     name_template: "oci-assume_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats: [tar.gz]
+    # The windows archive also carries oci-assume-bg.
+    allow_different_binary_count: true
     format_overrides:
       - goos: windows
         formats: [zip]
@@ -53,12 +67,17 @@ homebrew_casks:
     description: Switch OCI CLI session-token profiles like Granted's assume
     license: Apache-2.0
     # Binaries are unsigned; strip quarantine so Gatekeeper does not block them.
+    caveats: "Run `oci-assume setup` to finish installing."
     hooks:
       post:
         install: |
           if OS.mac? && system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/oci-assume"]
           end
+    # zap runs only on `brew uninstall --zap`, so upgrades keep the background agent.
+    zap:
+      launchctl:
+        - io.github.123yogin.oci-assume
 
 scoops:
   - repository:
@@ -68,6 +87,9 @@ scoops:
     homepage: https://github.com/123yogin/oci-assume
     description: Switch OCI CLI session-token profiles like Granted's assume
     license: Apache-2.0
+    # Scoop has no notes field; post_install is the supported way to print one.
+    post_install:
+      - Write-Host 'Run `oci-assume setup` to finish installing.'
 
 nfpms:
   - id: packages
@@ -77,6 +99,8 @@ nfpms:
     description: Switch OCI CLI session-token profiles like Granted's assume
     license: Apache-2.0
     formats: [deb, rpm]
+    scripts:
+      postinstall: packaging/postinstall.sh
 
 winget:
   - name: oci-assume
@@ -86,6 +110,7 @@ winget:
     homepage: https://github.com/123yogin/oci-assume
     publisher_url: https://github.com/123yogin
     skip_upload: true
+    release_notes: "Run `oci-assume setup` to finish installing."
     repository:
       owner: 123yogin
       name: winget-pkgs

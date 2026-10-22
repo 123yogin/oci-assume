@@ -36,12 +36,16 @@ func Path(profile string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return pathIn(dir, profile), nil
+}
+
+func pathIn(dir, profile string) string {
 	sum := sha256.Sum256([]byte(profile))
 	clean := unsafeChars.ReplaceAllString(profile, "_")
 	if len(clean) > 100 {
 		clean = clean[:100]
 	}
-	return filepath.Join(dir, clean+"-"+hex.EncodeToString(sum[:])[:8]+".lock"), nil
+	return filepath.Join(dir, clean+"-"+hex.EncodeToString(sum[:])[:8]+".lock")
 }
 
 // Acquire locks the profile, polling every 50ms until ctx ends (ErrTimeout).
@@ -54,14 +58,18 @@ func Acquire(ctx context.Context, profile string) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
+	return AcquireIn(ctx, dir, profile)
+}
+
+// AcquireIn is Acquire with the lock file in dir instead of the default lock directory.
+func AcquireIn(ctx context.Context, dir, name string) (func(), error) {
+	if ctx.Err() != nil {
+		return nil, ErrTimeout
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	path, err := Path(profile)
-	if err != nil {
-		return nil, err
-	}
-	fl := flock.New(path)
+	fl := flock.New(pathIn(dir, name))
 	ok, err := fl.TryLockContext(ctx, 50*time.Millisecond)
 	if !ok {
 		if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {

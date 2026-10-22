@@ -1,0 +1,5 @@
+alias ll='ls -l'
+
+# >>> oci-assume >>>
+command -v oci-assume >/dev/null && eval "$(oci-assume init bash)"
+# <<< oci-assume <<<
