@@ -22,6 +22,7 @@ import (
 	"github.com/123yogin/oci-assume/internal/ociconfig"
 	"github.com/123yogin/oci-assume/internal/picker"
 	"github.com/123yogin/oci-assume/internal/refresher"
+	onboard "github.com/123yogin/oci-assume/internal/setup"
 	"github.com/123yogin/oci-assume/internal/shell"
 	"github.com/123yogin/oci-assume/internal/state"
 	"github.com/123yogin/oci-assume/internal/token"
@@ -56,6 +57,8 @@ type deps struct {
 	scheduler  func(goos string) (refresher.Backend, error)
 	binPath    func() (string, error)
 	ociVersion func(ctx context.Context) (string, error)
+	// setupSteps backs the setup and uninstall commands.
+	setupSteps func(e *onboard.Env) []onboard.Step
 }
 
 func defaultDeps() *deps {
@@ -72,6 +75,7 @@ func defaultDeps() *deps {
 		scheduler:  refresher.ForOS,
 		binPath:    refresher.BinPath,
 		ociVersion: ociVersion,
+		setupSteps: onboard.DefaultSteps,
 	}
 }
 
@@ -131,7 +135,7 @@ func exitCode(err error) int {
 	switch {
 	case err == nil:
 		return 0
-	case errors.Is(err, ocicli.ErrNeedsLogin):
+	case errors.Is(err, ocicli.ErrNeedsLogin), errors.Is(err, onboard.ErrNeedsYes):
 		return 2
 	case errors.Is(err, ocicli.ErrNotInstalled):
 		return 3
@@ -183,7 +187,7 @@ func newRoot(d *deps) *cobra.Command {
 	root.Flags().StringVar(&f.shell, "shell", "", `print exports for zsh|bash|fish|pwsh without the hook, e.g. eval "$(oci-assume --shell bash dev)"`)
 
 	root.AddCommand(newStatus(d), newRefresh(d, f), newLogin(d, f), newPrompt(d), newInit(), newVersion(),
-		newDaemon(d), newDoctor(d))
+		newDaemon(d), newDoctor(d), newSetup(d), newUninstall(d))
 	return root
 }
 

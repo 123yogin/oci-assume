@@ -3,7 +3,7 @@ export OCI_ASSUME_SHELL=bash
 
 oci-assume() {
   case "${1:-}" in
-    status|refresh|login|prompt|daemon|init|doctor|version|help|completion|__complete|__completeNoDesc|--help|-h|--version)
+    status|refresh|login|prompt|daemon|init|doctor|setup|uninstall|version|help|completion|__complete|__completeNoDesc|--help|-h|--version)
       command oci-assume "$@"
       return $?
       ;;

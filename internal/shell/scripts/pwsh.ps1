@@ -8,7 +8,7 @@ function oci-assume {
         $global:LASTEXITCODE = 1
         return
     }
-    $passthrough = @('status','refresh','login','prompt','daemon','init','doctor','version','help','completion','__complete','__completeNoDesc','--help','-h','--version')
+    $passthrough = @('status','refresh','login','prompt','daemon','init','doctor','setup','uninstall','version','help','completion','__complete','__completeNoDesc','--help','-h','--version')
     if ($args.Count -gt 0 -and $passthrough -contains $args[0]) {
         & $bin @args
         return
