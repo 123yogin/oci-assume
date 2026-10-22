@@ -1,0 +1,103 @@
+version: 2
+project_name: oci-assume
+
+builds:
+  - id: oci-assume
+    main: ./cmd/oci-assume
+    binary: oci-assume
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/123yogin/oci-assume/internal/cli.Version={{.Version}} -X github.com/123yogin/oci-assume/internal/cli.Commit={{.Commit}} -X github.com/123yogin/oci-assume/internal/cli.Date={{.Date}}
+
+archives:
+  - id: default
+    # Must match archive= in install.sh.
+    name_template: "oci-assume_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - --bundle=${signature}
+      - ${artifact}
+      - --yes
+
+sboms:
+  - artifacts: archive
+
+homebrew_casks:
+  - name: oci-assume
+    repository:
+      owner: 123yogin
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: https://github.com/123yogin/oci-assume
+    description: Switch OCI CLI session-token profiles like Granted's assume
+    license: Apache-2.0
+    # Binaries are unsigned; strip quarantine so Gatekeeper does not block them.
+    hooks:
+      post:
+        install: |
+          if OS.mac? && system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/oci-assume"]
+          end
+
+scoops:
+  - repository:
+      owner: 123yogin
+      name: scoop-bucket
+      token: "{{ .Env.SCOOP_BUCKET_TOKEN }}"
+    homepage: https://github.com/123yogin/oci-assume
+    description: Switch OCI CLI session-token profiles like Granted's assume
+    license: Apache-2.0
+
+nfpms:
+  - id: packages
+    package_name: oci-assume
+    maintainer: Yogin Parmar
+    homepage: https://github.com/123yogin/oci-assume
+    description: Switch OCI CLI session-token profiles like Granted's assume
+    license: Apache-2.0
+    formats: [deb, rpm]
+
+winget:
+  - name: oci-assume
+    publisher: 123yogin
+    short_description: Switch OCI CLI session-token profiles like Granted's assume
+    license: Apache-2.0
+    homepage: https://github.com/123yogin/oci-assume
+    publisher_url: https://github.com/123yogin
+    skip_upload: true
+    repository:
+      owner: 123yogin
+      name: winget-pkgs
+
+changelog:
+  use: github
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: Other
+      order: 999

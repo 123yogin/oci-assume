@@ -1,0 +1,47 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: oci-assume version
+      description: Output of `oci-assume version`
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: macOS 15 arm64, Ubuntu 24.04, Windows 11
+    validations:
+      required: true
+  - type: dropdown
+    id: shell
+    attributes:
+      label: Shell
+      options: [zsh, bash, fish, pwsh, other]
+    validations:
+      required: true
+  - type: input
+    id: oci
+    attributes:
+      label: oci CLI version
+      description: Output of `oci --version`
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: oci-assume doctor output
+      description: Redact tenancy names, OCIDs, usernames and paths you do not want to share.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: Include the command you ran and any error text (redacted).
+    validations:
+      required: true

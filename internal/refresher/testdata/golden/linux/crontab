@@ -1,0 +1,1 @@
+*/30 * * * * PATH=/usr/bin:/bin OCI_ASSUME_OCI_BIN=/opt/oci/bin/oci OCI_ASSUME_STATE_DIR=/home/user/state OCI_CLI_CONFIG_FILE=/home/user/.oci/config /usr/local/bin/oci-assume refresh --all --background >/dev/null 2>&1 # oci-assume

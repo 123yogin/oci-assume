@@ -1,0 +1,41 @@
+#!/bin/sh
+# Fake oci CLI for tests. Mode: $FAKE_OCI_MODE; token: $FAKE_TOKEN_PATH; log: $FAKE_OCI_LOG.
+# OCI_CLI_* variables seen by each call are appended to $FAKE_OCI_LOG.env.
+mode=${FAKE_OCI_MODE:-ok}
+[ -n "$FAKE_OCI_LOG" ] && printf '%s\n' "$*" >> "$FAKE_OCI_LOG"
+[ -n "$FAKE_OCI_LOG" ] && { env | grep '^OCI_CLI_' >> "$FAKE_OCI_LOG.env" || :; }
+
+b64u() { printf '%s' "$1" | base64 | tr '+/' '-_' | tr -d '=\n'; }
+
+write_token() {
+  [ -n "$FAKE_TOKEN_PATH" ] || return 0
+  exp=$(( $(date +%s) + 3600 ))
+  umask 077
+  printf '%s.%s.sig' "$(b64u '{"alg":"none"}')" "$(b64u "{\"exp\":$exp}")" > "$FAKE_TOKEN_PATH"
+}
+
+[ "$mode" = slow ] && exec sleep 30
+
+sub="$1 $2"
+case "$sub" in
+  "session validate")
+    if [ "$mode" = expired ]; then
+      echo "Error: session token has expired" >&2; exit 1
+    fi
+    exit 0 ;;
+  "session refresh")
+    case "$mode" in
+      expired) echo "Error: session token has expired" >&2; exit 1 ;;
+      refresh-fail) echo "Error: session token is not valid or has expired" >&2; exit 1 ;;
+      refresh-error) echo "ServiceError: status 500, InternalServerError" >&2; exit 1 ;;
+      *) write_token; exit 0 ;;
+    esac ;;
+  "session authenticate")
+    if [ "$mode" = auth-fail ]; then
+      echo "Error: authentication failed" >&2; exit 1
+    fi
+    [ "$mode" = auth-ok ] && echo "FAKE-AUTH-STDOUT"
+    write_token; exit 0 ;;
+esac
+echo "fake oci: unsupported args: $*" >&2
+exit 2

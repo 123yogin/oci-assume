@@ -1,0 +1,11 @@
+[Unit]
+Description=oci-assume session refresh
+
+[Service]
+Type=oneshot
+Environment={{unitEnv (print "PATH=" .Path)}}
+{{- range .Env}}
+Environment={{unitEnv (print .Key "=" .Val)}}
+{{- end}}
+UnsetEnvironment=OCI_ASSUME_THRESHOLD
+ExecStart={{unit .Bin}} refresh --all --background

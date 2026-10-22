@@ -1,0 +1,41 @@
+version: "2"
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - ineffassign
+    - unused
+    - gosec
+    - misspell
+  settings:
+    errcheck:
+      # Writes to stdout/stderr have no useful recovery.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+  exclusions:
+    presets: []
+    rules:
+      # Tests build fixtures in temp dirs and run helper binaries.
+      - linters: [gosec]
+        path: _test\.go$
+        text: "G(101|204|301|302|304|306|703)"
+      # Reads user-supplied profile, token and state paths by design.
+      - linters: [gosec]
+        path: ^internal/(token|state|ociconfig)/
+        text: G304
+      # LaunchAgents and systemd user dirs are conventionally 0755.
+      - linters: [gosec]
+        path: ^internal/refresher/
+        text: G301
+      # "scripts/*.sh" names are not credentials.
+      - linters: [gosec]
+        path: ^internal/shell/init\.go$
+        text: G101
+      # The fake oci must be executable.
+      - linters: [gosec]
+        path: ^internal/testutil/
+        text: G306

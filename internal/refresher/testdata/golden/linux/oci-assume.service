@@ -1,0 +1,11 @@
+[Unit]
+Description=oci-assume session refresh
+
+[Service]
+Type=oneshot
+Environment="PATH=/usr/bin:/bin"
+Environment="OCI_ASSUME_OCI_BIN=/opt/oci/bin/oci"
+Environment="OCI_ASSUME_STATE_DIR=/home/user/state"
+Environment="OCI_CLI_CONFIG_FILE=/home/user/.oci/config"
+UnsetEnvironment=OCI_ASSUME_THRESHOLD
+ExecStart="/usr/local/bin/oci-assume" refresh --all --background

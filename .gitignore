@@ -1,0 +1,5 @@
+/oci-assume
+dist/
+.agency/
+test/shells/.bin/
+docs/agency/
