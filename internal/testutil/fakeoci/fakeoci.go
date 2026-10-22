@@ -2,33 +2,26 @@
 package fakeoci
 
 import (
-	_ "embed"
-	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
+
+	"github.com/123yogin/oci-assume/internal/testutil/gobuild"
 )
 
-//go:embed oci
-var shScript []byte
-
-//go:embed oci.cmd
-var cmdScript []byte
-
-// Install writes the fake oci into a temp dir, sets the FAKE_* env vars and returns its path.
+// Install sets the FAKE_* env vars to a fresh temp dir and returns the Go-built fake's path.
+// The sh fake beside this file is only for the container shell tests.
 func Install(t *testing.T, mode string) string {
 	t.Helper()
-	dir := t.TempDir()
-	name, body := "oci", shScript
-	if runtime.GOOS == "windows" {
-		name, body = "oci.cmd", cmdScript
-	}
-	bin := filepath.Join(dir, name)
-	if err := os.WriteFile(bin, body, 0o755); err != nil {
+	bin, err := gobuild.Build("github.com/123yogin/oci-assume/internal/testutil/fakeoci/cmd/oci", "oci")
+	if err != nil {
 		t.Fatal(err)
 	}
+	dir := t.TempDir()
 	t.Setenv("FAKE_OCI_MODE", mode)
 	t.Setenv("FAKE_TOKEN_PATH", filepath.Join(dir, "token"))
 	t.Setenv("FAKE_OCI_LOG", filepath.Join(dir, "calls.log"))
 	return bin
 }
+
+// Cleanup removes the built fake; call it from TestMain after m.Run.
+func Cleanup() { gobuild.Cleanup() }

@@ -13,9 +13,6 @@ import (
 
 const pollEvery = 100 * time.Millisecond
 
-// pollsInput: Read times out, so a trailing ESC can wait for the rest of its sequence.
-const pollsInput = true
-
 type unixConsole struct {
 	f   *os.File
 	fd  int
@@ -51,6 +48,9 @@ func (c *unixConsole) Read(p []byte) (int, error) {
 	}
 	return c.f.Read(p)
 }
+
+// Polls is true: Read times out, so a trailing ESC can wait for the rest of its sequence.
+func (c *unixConsole) Polls() bool { return true }
 
 func (c *unixConsole) Write(p []byte) (int, error) { return c.f.Write(p) }
 

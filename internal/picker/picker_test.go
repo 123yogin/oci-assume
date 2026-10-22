@@ -79,7 +79,8 @@ func golden(t *testing.T, name, got string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != string(want) {
+	// A CRLF checkout must not fail the comparison.
+	if got != strings.ReplaceAll(string(want), "\r\n", "\n") {
 		t.Errorf("%s mismatch\n--- got ---\n%s\n--- want ---\n%s", name, got, want)
 	}
 }
@@ -438,14 +439,16 @@ func TestPickNoTTY(t *testing.T) {
 }
 
 // fakeConsole replays chunks; an empty chunk is a read timeout.
+// It polls like a unix tty unless blocking is set, so tests behave the same on every OS.
 type fakeConsole struct {
-	chunks  []string
-	out     bytes.Buffer
-	w, h    int
-	closed  bool
-	panicAt int // read index that panics, or -1
-	onRead  func(i int)
-	reads   int
+	blocking bool
+	chunks   []string
+	out      bytes.Buffer
+	w, h     int
+	closed   bool
+	panicAt  int // read index that panics, or -1
+	onRead   func(i int)
+	reads    int
 }
 
 func (c *fakeConsole) Read(p []byte) (int, error) {
@@ -466,6 +469,7 @@ func (c *fakeConsole) Read(p []byte) (int, error) {
 func (c *fakeConsole) Write(p []byte) (int, error) { return c.out.Write(p) }
 func (c *fakeConsole) Size() (int, int, bool)      { return c.w, c.h, c.w > 0 }
 func (c *fakeConsole) Close() error                { c.closed = true; return nil }
+func (c *fakeConsole) Polls() bool                 { return !c.blocking }
 
 // fakeTerminal makes Pick run on c and returns a channel that delivers signals to it.
 func fakeTerminal(t *testing.T, c *fakeConsole) chan<- os.Signal {
@@ -535,6 +539,16 @@ func TestPickCancel(t *testing.T) {
 	fakeTerminal(t, c)
 	if _, err := Pick(fixture(), os.Stdin); !errors.Is(err, ErrCancelled) || c.reads != 2 {
 		t.Fatalf("got %v after %d reads, want ErrCancelled after 2", err, c.reads)
+	}
+	assertCleared(t, c, 10)
+}
+
+// A console whose Read blocks (Windows) takes a trailing lone ESC as Esc at once.
+func TestPickBlockingConsoleEscIsImmediate(t *testing.T) {
+	c := &fakeConsole{blocking: true, chunks: []string{"\x1b", "x"}, w: 100, h: 40, panicAt: -1}
+	fakeTerminal(t, c)
+	if _, err := Pick(fixture(), os.Stdin); !errors.Is(err, ErrCancelled) || c.reads != 1 {
+		t.Fatalf("got %v after %d reads, want ErrCancelled after 1", err, c.reads)
 	}
 	assertCleared(t, c, 10)
 }

@@ -1,13 +1,31 @@
 package shell
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/123yogin/oci-assume/internal/testutil/gobuild"
 )
+
+// stubPath is a PATH entry holding the Go-built oci-assume stand-in, so pwsh on Windows can run it.
+var stubPath string
+
+func TestMain(m *testing.M) {
+	bin, err := gobuild.Build("github.com/123yogin/oci-assume/internal/testutil/wrapstub", "oci-assume")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	stubPath = filepath.Dir(bin) + string(os.PathListSeparator) + os.Getenv("PATH")
+	code := m.Run()
+	gobuild.Cleanup()
+	os.Exit(code)
+}
 
 func TestParse(t *testing.T) {
 	for _, s := range []string{"zsh", "bash", "fish", "pwsh"} {
@@ -69,17 +87,22 @@ func shellBin(t *testing.T, sh Shell) string {
 }
 
 // runIn runs script in sh and returns stdout.
+// POSIX shells read it from a file: MSYS bash on Windows mangles backslashes in -c arguments.
 func runIn(t *testing.T, sh Shell, script string, env ...string) string {
 	t.Helper()
 	bin := shellBin(t, sh)
 	var args []string
-	switch sh {
-	case Pwsh:
+	if sh == Pwsh {
 		args = []string{"-NoProfile", "-NonInteractive", "-Command", script}
-	case Fish:
-		args = []string{"--no-config", "-c", script}
-	default:
-		args = []string{"-c", script}
+	} else {
+		f := filepath.Join(t.TempDir(), "script")
+		if err := os.WriteFile(f, []byte(script), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		args = []string{filepath.ToSlash(f)}
+		if sh == Fish {
+			args = []string{"--no-config", filepath.ToSlash(f)}
+		}
 	}
 	cmd := exec.Command(bin, args...)
 	cmd.Env = append(os.Environ(), env...)
@@ -205,17 +228,6 @@ func TestInitContainsNoUserData(t *testing.T) {
 	}
 }
 
-// stubDir makes a dir with an executable oci-assume that prints line (or fails).
-func stubDir(t *testing.T, body string) string {
-	t.Helper()
-	d := t.TempDir()
-	p := filepath.Join(d, "oci-assume")
-	if err := os.WriteFile(p, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return d
-}
-
 func TestWrapperEvaluatesOnSuccess(t *testing.T) {
 	cases := []struct {
 		sh    Shell
@@ -230,10 +242,8 @@ func TestWrapperEvaluatesOnSuccess(t *testing.T) {
 	for _, c := range cases {
 		t.Run(string(c.sh), func(t *testing.T) {
 			shellBin(t, c.sh)
-			d := stubDir(t, "cat <<'EOF'\n"+c.line+"\nEOF")
-			path := d + string(os.PathListSeparator) + os.Getenv("PATH")
 			init := Init(c.sh)
-			got := runIn(t, c.sh, init+"\noci-assume dev\n"+c.check, "PATH="+path, "OCI_CLI_PROFILE=")
+			got := runIn(t, c.sh, init+"\noci-assume dev\n"+c.check, "PATH="+stubPath, "STUB_OUT="+c.line, "OCI_CLI_PROFILE=")
 			if got != "dev|"+string(c.sh) {
 				t.Fatalf("got %q", got)
 			}
@@ -255,8 +265,6 @@ func TestWrapperSkipsEvalOnFailureAndPassthrough(t *testing.T) {
 				set = "export OCI_CLI_PROFILE='bad'"
 			}
 			// Fails on "dev"; for "status" prints the line as data and must not eval it.
-			d := stubDir(t, "cat <<'EOF'\n"+set+"\nEOF\nif [ \"$1\" = status ]; then exit 0; fi\nexit 2")
-			path := d + string(os.PathListSeparator) + os.Getenv("PATH")
 			var script string
 			switch sh {
 			case Fish:
@@ -266,7 +274,7 @@ func TestWrapperSkipsEvalOnFailureAndPassthrough(t *testing.T) {
 			default:
 				script = `oci-assume dev >/dev/null; rc=$?; oci-assume status >/dev/null; printf '%s|[%s]' "$rc" "$OCI_CLI_PROFILE"`
 			}
-			got := runIn(t, sh, Init(sh)+"\n"+script, "PATH="+path, "OCI_CLI_PROFILE=")
+			got := runIn(t, sh, Init(sh)+"\n"+script, "PATH="+stubPath, "STUB_OUT="+set, "STUB_EXIT=2", "OCI_CLI_PROFILE=")
 			if got != "2|[]" {
 				t.Fatalf("got %q", got)
 			}
@@ -279,13 +287,11 @@ func TestWrapperSetsEvalEnvOnlyOnEvalPath(t *testing.T) {
 		t.Run(string(sh), func(t *testing.T) {
 			shellBin(t, sh)
 			log := filepath.Join(t.TempDir(), "log")
-			d := stubDir(t, `echo "$1=${OCI_ASSUME_EVAL:-unset}" >> "$STUB_LOG"`)
-			path := d + string(os.PathListSeparator) + os.Getenv("PATH")
 			script := map[Shell]string{
 				Zsh: "oci-assume dev; oci-assume status", Bash: "oci-assume dev; oci-assume status",
 				Fish: "oci-assume dev; oci-assume status", Pwsh: "oci-assume dev; oci-assume status; [Console]::Out.Write('after=' + [string]$env:OCI_ASSUME_EVAL)",
 			}[sh]
-			out := runIn(t, sh, Init(sh)+"\n"+script, "PATH="+path, "STUB_LOG="+log, "OCI_ASSUME_EVAL=")
+			out := runIn(t, sh, Init(sh)+"\n"+script, "PATH="+stubPath, "STUB_LOG="+log, "OCI_ASSUME_EVAL=")
 			b, err := os.ReadFile(log)
 			if err != nil {
 				t.Fatal(err)
@@ -306,10 +312,8 @@ func TestWrapperPassesCompletionThrough(t *testing.T) {
 		t.Run(string(sh), func(t *testing.T) {
 			shellBin(t, sh)
 			log := filepath.Join(t.TempDir(), "log")
-			d := stubDir(t, `echo "$1=${OCI_ASSUME_EVAL:-unset}" >> "$STUB_LOG"; echo cand`)
-			path := d + string(os.PathListSeparator) + os.Getenv("PATH")
 			script := `oci-assume __complete ""; oci-assume __completeNoDesc ""`
-			out := runIn(t, sh, Init(sh)+"\n"+script, "PATH="+path, "STUB_LOG="+log, "OCI_ASSUME_EVAL=")
+			out := runIn(t, sh, Init(sh)+"\n"+script, "PATH="+stubPath, "STUB_LOG="+log, "STUB_OUT=cand", "OCI_ASSUME_EVAL=")
 			b, err := os.ReadFile(log)
 			if err != nil {
 				t.Fatal(err)

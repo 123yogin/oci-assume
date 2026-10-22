@@ -61,6 +61,8 @@ type console interface {
 	io.ReadWriter
 	Size() (w, h int, ok bool)
 	Close() error // restores the terminal mode
+	// Polls reports whether Read times out; if not, a trailing lone ESC is Esc at once.
+	Polls() bool
 }
 
 // Seams for tests: the TTY check, the terminal, and signal delivery.
@@ -141,7 +143,7 @@ func (s *screen) run(sigs <-chan os.Signal) (string, error) {
 		var keys []keyEvent
 		if n == 0 {
 			keys, pending = flush(pending), nil
-		} else if keys, pending = feed(pending, buf[:n]); !pollsInput && len(pending) == 1 && pending[0] == 0x1b {
+		} else if keys, pending = feed(pending, buf[:n]); !s.c.Polls() && len(pending) == 1 && pending[0] == 0x1b {
 			keys, pending = append(keys, flush(pending)...), nil // no timeout will come to flush it
 		}
 		for _, k := range keys {

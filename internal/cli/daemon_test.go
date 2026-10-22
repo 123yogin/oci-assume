@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -143,7 +144,12 @@ func TestDoctorReportsMissingHook(t *testing.T) {
 	if code := e.run("doctor"); code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}
-	if !strings.Contains(e.stdout.String(), `✗ shell hook not loaded — fix: eval "$(oci-assume init bash)"`) {
+	// Windows always hints pwsh; pinning goos instead would break the token-permission checks.
+	want := `✗ shell hook not loaded — fix: eval "$(oci-assume init bash)"`
+	if runtime.GOOS == "windows" {
+		want = "✗ shell hook not loaded — fix: oci-assume init pwsh | Out-String | Invoke-Expression"
+	}
+	if !strings.Contains(e.stdout.String(), want) {
 		t.Fatalf("stdout:\n%s", e.stdout.String())
 	}
 }

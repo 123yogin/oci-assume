@@ -65,7 +65,14 @@ func testEnv(t *testing.T) []string {
 	if err := os.WriteFile(cfg, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return append(os.Environ(), "OCI_CLI_CONFIG_FILE="+cfg, "OCI_ASSUME_STATE_DIR="+dir,
+	// Drop the caller's OCI_* settings (an assumed profile, a threshold) so runs are hermetic.
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "OCI_CLI_") && !strings.HasPrefix(kv, "OCI_ASSUME_") {
+			env = append(env, kv)
+		}
+	}
+	return append(env, "OCI_CLI_CONFIG_FILE="+cfg, "OCI_ASSUME_STATE_DIR="+dir,
 		"TERM=xterm-256color", "NO_COLOR=", "COLORTERM=")
 }
 

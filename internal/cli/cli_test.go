@@ -80,7 +80,8 @@ security_token_file=%s
 	t.Setenv("OCI_ASSUME_STATE_DIR", t.TempDir())
 	t.Setenv("OCI_ASSUME_OCI_BIN", bin)
 	t.Setenv("OCI_ASSUME_SHELL", "zsh")
-	for _, k := range []string{"OCI_CLI_PROFILE", "OCI_ASSUME_EVAL", "OCI_ASSUME_THRESHOLD"} {
+	// SHELL picks the hook hint; CI runners default to bash.
+	for _, k := range []string{"OCI_CLI_PROFILE", "OCI_ASSUME_EVAL", "OCI_ASSUME_THRESHOLD", "SHELL"} {
 		t.Setenv(k, "")
 	}
 	return e
@@ -589,7 +590,12 @@ func TestPromptLatency(t *testing.T) {
 	for i := 0; i < n; i++ {
 		run(context.Background(), d, []string{"prompt"})
 	}
-	if avg := time.Since(start) / n; avg > 2*time.Millisecond {
+	// File opens on Windows runners are several times slower (6ms seen), so it gets a looser budget.
+	budget := 2 * time.Millisecond
+	if runtime.GOOS == "windows" {
+		budget = 20 * time.Millisecond
+	}
+	if avg := time.Since(start) / n; avg > budget {
 		t.Fatalf("avg %v per prompt", avg)
 	}
 }

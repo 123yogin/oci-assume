@@ -1,0 +1,4 @@
+# LF everywhere: goldens, embedded templates and shell scripts are compared or run byte for byte.
+* text=auto eol=lf
+# comments.ini is CRLF on purpose: it tests that the parser accepts Windows line endings.
+internal/ociconfig/testdata/comments.ini -text

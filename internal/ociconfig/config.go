@@ -106,7 +106,8 @@ func resolve(p, dir string) string {
 		}
 		return p
 	}
-	if filepath.IsAbs(p) {
+	// A rooted path with no drive (/x or \x) means the current drive on Windows, not the config dir.
+	if filepath.IsAbs(p) || strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) {
 		return p
 	}
 	return filepath.Join(dir, p)

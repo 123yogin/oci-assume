@@ -10,9 +10,6 @@ import (
 	"golang.org/x/term"
 )
 
-// pollsInput: Read blocks, so a trailing ESC is taken as the Esc key at once.
-const pollsInput = false
-
 type winConsole struct {
 	in, out *os.File
 	inOld   *term.State
@@ -55,6 +52,9 @@ func openConsole() (console, error) {
 // Read blocks on the main goroutine; Pick returns right after the deciding key,
 // so no reader is left behind to hold the console open.
 func (c *winConsole) Read(p []byte) (int, error) { return c.in.Read(p) }
+
+// Polls is false: Read blocks, and the console delivers each key's VT sequence in one read.
+func (c *winConsole) Polls() bool { return false }
 
 func (c *winConsole) Write(p []byte) (int, error) { return c.out.Write(p) }
 

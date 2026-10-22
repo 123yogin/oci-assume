@@ -103,11 +103,26 @@ jobs:
           set -euo pipefail
           bin="$RUNNER_TEMP/oci-assume"
           go build -o "$bin" ./cmd/oci-assume
-          export HOME="$RUNNER_TEMP/home" OCI_ASSUME_STATE_DIR="$RUNNER_TEMP/state" XDG_CONFIG_HOME="$RUNNER_TEMP/xdg"
-          mkdir -p "$HOME" "$OCI_ASSUME_STATE_DIR" "$XDG_CONFIG_HOME"
+          export OCI_ASSUME_STATE_DIR="$RUNNER_TEMP/state"
+          mkdir -p "$OCI_ASSUME_STATE_DIR"
+          # Linux keeps the runner's real HOME: the systemd user manager only reads units under its own config dir.
+          if [ "$RUNNER_OS" = macOS ]; then
+            export HOME="$RUNNER_TEMP/home"
+            mkdir -p "$HOME"
+          fi
           "$bin" daemon install
           "$bin" daemon status | tee "$RUNNER_TEMP/status.txt"
           grep -q '^installed: yes$' "$RUNNER_TEMP/status.txt"
+          if [ "$RUNNER_OS" = Linux ]; then
+            unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+            if systemctl --user show-environment >/dev/null 2>&1; then
+              grep -qx "path: $unit_dir/oci-assume.timer" "$RUNNER_TEMP/status.txt"
+              systemctl --user is-enabled oci-assume.timer
+              systemctl --user is-active oci-assume.timer
+            else
+              crontab -l | grep -q '# oci-assume$'
+            fi
+          fi
           "$bin" daemon uninstall
           if [ "$RUNNER_OS" = macOS ]; then
             if launchctl print "gui/$(id -u)/io.github.123yogin.oci-assume" >/dev/null 2>&1; then
@@ -115,8 +130,11 @@ jobs:
             fi
             test ! -e "$HOME/Library/LaunchAgents/io.github.123yogin.oci-assume.plist"
           else
-            test ! -e "$XDG_CONFIG_HOME/systemd/user/oci-assume.timer"
-            test ! -e "$XDG_CONFIG_HOME/systemd/user/oci-assume.service"
+            test ! -e "$unit_dir/oci-assume.timer"
+            test ! -e "$unit_dir/oci-assume.service"
+            if systemctl --user is-enabled oci-assume.timer >/dev/null 2>&1; then
+              echo "timer still enabled"; exit 1
+            fi
             if crontab -l 2>/dev/null | grep -q '# oci-assume'; then
               echo "cron line left"; exit 1
             fi

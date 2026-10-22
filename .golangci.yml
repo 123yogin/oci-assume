@@ -35,7 +35,7 @@ linters:
       - linters: [gosec]
         path: ^internal/shell/init\.go$
         text: G101
-      # The fake oci must be executable.
+      # Test helpers: an executable fake oci, env-named files, and go build of fixed packages.
       - linters: [gosec]
         path: ^internal/testutil/
-        text: G306
+        text: "G(204|304|306|703)"

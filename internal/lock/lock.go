@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gofrs/flock"
 	"github.com/123yogin/oci-assume/internal/state"
+	"github.com/gofrs/flock"
 )
 
 // ErrTimeout means the lock was not obtained before the context ended.
