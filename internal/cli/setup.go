@@ -38,6 +38,7 @@ func setupEnv(cmd *cobra.Command, d *deps, sh string) (*onboard.Env, error) {
 		LookPath: exec.LookPath,
 		Getenv:   os.Getenv,
 		Now:      d.now,
+		Ctx:      cmd.Context(),
 	}, nil
 }
 
