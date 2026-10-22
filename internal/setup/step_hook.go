@@ -16,12 +16,9 @@ func NewHookStep() Step { return hookStep{} }
 func (hookStep) ID() string     { return "shell-hook" }
 func (hookStep) NeedsTTY() bool { return false }
 
-// plan resolves the shell and its targets; sh == "" means the shell is unknown and the step is skipped.
+// plan resolves the shell and its targets; an errNoShell error means the step is skipped.
 func (hookStep) plan(e *Env) (sh string, targets []Target, legacy bool, err error) {
 	sh, err = DetectShell(e, e.Shell)
-	if errors.Is(err, ErrUnknownShell) {
-		return "", nil, false, nil
-	}
 	if err != nil {
 		return "", nil, false, err
 	}
@@ -37,13 +34,17 @@ func (hookStep) plan(e *Env) (sh string, targets []Target, legacy bool, err erro
 }
 
 func (s hookStep) Describe(e *Env) string {
-	sh, targets, _, err := s.plan(e)
-	if err != nil {
-		return fmt.Sprintf("Shell hook: %v", err)
-	}
+	_, targets, _, err := s.plan(e)
 	var b strings.Builder
-	if sh == "" {
-		b.WriteString("Shell hook: could not detect your shell, so no file will be changed.\n")
+	if e.GOOS == "windows" || e.Shell == "pwsh" {
+		_, silent := pwshProfiles(e)
+		for _, exe := range silent {
+			fmt.Fprintf(&b, "Shell hook: %s is installed but did not report $PROFILE.CurrentUserAllHosts; skipping it.\n", exe)
+		}
+	}
+	if errors.Is(err, errNoShell) {
+		reason := strings.TrimPrefix(err.Error(), errNoShell.Error()+": ")
+		fmt.Fprintf(&b, "Shell hook: skipped (%s); no file will be changed.\n", reason)
 		b.WriteString("  Add the line for your shell yourself, or re-run with --shell zsh|bash|fish|pwsh:\n")
 		for _, x := range []struct{ sh, file string }{
 			{"zsh", "~/.zshrc"}, {"bash", "~/.bashrc"},
@@ -52,6 +53,9 @@ func (s hookStep) Describe(e *Env) string {
 			fmt.Fprintf(&b, "    %-4s  %s:  %s\n", x.sh, x.file, hookLine(x.sh))
 		}
 		return b.String()
+	}
+	if err != nil {
+		return fmt.Sprintf("Shell hook: %v", err)
 	}
 	for _, t := range targets {
 		if done, _ := targetDone(t); done {
@@ -74,24 +78,25 @@ func (s hookStep) Describe(e *Env) string {
 }
 
 func (s hookStep) Done(e *Env) (bool, error) {
-	sh, targets, legacy, err := s.plan(e)
-	if err != nil || sh == "" {
-		return false, err
+	_, targets, legacy, err := s.plan(e)
+	if errors.Is(err, errNoShell) {
+		return false, nil
 	}
-	if legacy {
-		return true, nil
+	if err != nil || legacy {
+		return legacy, err
 	}
+	// A malformed block reads as not done, so Apply reports it with the file name.
 	for _, t := range targets {
 		if ok, err := targetDone(t); err != nil || !ok {
-			return false, err
+			return false, nil
 		}
 	}
 	return true, nil
 }
 
 func (s hookStep) Apply(e *Env, r *Receipt) error {
-	sh, targets, legacy, err := s.plan(e)
-	if err != nil || sh == "" || legacy {
+	_, targets, legacy, err := s.plan(e)
+	if err != nil || legacy {
 		return err
 	}
 	for _, t := range targets {
@@ -111,7 +116,8 @@ func (hookStep) Undo(e *Env, r *Receipt) error {
 	for _, sh := range []string{"zsh", "bash", "fish", "pwsh"} {
 		ts, _ := HookTargets(e, sh)
 		if sh == "bash" {
-			ts = append(ts, Target{Path: filepath.Join(e.Home, ".bash_profile"), Kind: "block"})
+			ts = append(ts, Target{Path: filepath.Join(e.Home, ".bash_profile"), Kind: "block"},
+				Target{Path: filepath.Join(e.Home, ".bash_login"), Kind: "block"})
 		}
 		for _, t := range ts {
 			if !hasFileIn(files, t.Path) {

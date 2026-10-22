@@ -130,8 +130,8 @@ func TestBlockPwshBothEditions(t *testing.T) {
 	core := filepath.Join(t.TempDir(), "OneDrive", "Documents", "PowerShell", "profile.ps1")
 	desk := filepath.Join(t.TempDir(), "Documents", "WindowsPowerShell", "profile.ps1")
 	e, _ := hookEnv(t, "windows", nil, map[string]string{
-		"pwsh -NoProfile -Command $PROFILE.CurrentUserAllHosts":       "\ufeff" + core + "\r\n",
-		"powershell -NoProfile -Command $PROFILE.CurrentUserAllHosts": desk + "\r\n",
+		"pwsh " + pwshArgs:       "warning: noise\r\n\ufeff" + core + "\r\n\r\n",
+		"powershell " + pwshArgs: desk + "\r\n",
 	})
 	e.Shell = "pwsh"
 	write(t, desk, "Set-Alias g git\r\n")
@@ -368,7 +368,7 @@ func TestDetectShellOrder(t *testing.T) {
 			e, _ := hookEnv(t, c.goos, map[string]string{"SHELL": c.env}, map[string]string{ps: c.parent + "\n"})
 			if c.goos == "windows" {
 				old := windowsParent
-				windowsParent = func() (string, error) { return c.parent, nil }
+				windowsParent = func() (string, string) { return c.parent, "" }
 				defer func() { windowsParent = old }()
 			}
 			got, err := DetectShell(e, c.flag)
@@ -401,7 +401,10 @@ func TestUnknownShellPrintsAllAndSkips(t *testing.T) {
 			t.Fatalf("describe missing %q:\n%s", want, d)
 		}
 	}
-	r := apply(t, e)
+	r := &Receipt{}
+	if err := s.Apply(e, r); !errors.Is(err, errNoShell) {
+		t.Fatalf("apply err %v", err)
+	}
 	ents, _ := os.ReadDir(e.Home)
 	if len(r.Files) != 0 || len(ents) != 0 {
 		t.Fatalf("wrote files: %+v %v", r.Files, ents)
@@ -422,5 +425,220 @@ func TestReadOnlyRCRefused(t *testing.T) {
 	err := NewHookStep().Apply(e, &Receipt{})
 	if err == nil || !strings.Contains(err.Error(), "read-only") || read(t, rc) != "a\n" {
 		t.Fatalf("err %v", err)
+	}
+}
+
+var pwshArgs = "-NoProfile -Command " + pwshPathQuery
+
+func TestNestedBeginMarkerRefused(t *testing.T) {
+	e, _ := hookEnv(t, "linux", nil, nil)
+	e.Shell = "zsh"
+	rc := filepath.Join(e.Home, ".zshrc")
+	orig := markBegin + "\nold\nmine\n" + markBegin + "\nx\n" + markEnd + "\n"
+	write(t, rc, orig)
+	if err := NewHookStep().Apply(e, &Receipt{}); err == nil || !strings.Contains(err.Error(), "nested") {
+		t.Fatalf("apply err %v", err)
+	}
+	r := &Receipt{Files: []FileEntry{{Path: rc, Kind: "block"}}}
+	if err := NewHookStep().Undo(e, r); err == nil || !strings.Contains(err.Error(), "nested") {
+		t.Fatalf("undo err %v", err)
+	}
+	if read(t, rc) != orig {
+		t.Fatalf("file changed: %q", read(t, rc))
+	}
+}
+
+func TestDuplicateBlocksCollapsed(t *testing.T) {
+	e, _ := hookEnv(t, "linux", nil, nil)
+	e.Shell = "zsh"
+	rc := filepath.Join(e.Home, ".zshrc")
+	b := markBegin + "\n" + hookLine("zsh") + "\n" + markEnd + "\n"
+	write(t, rc, "a\n"+b+"mid\n"+b+"end\n")
+	if done, _ := NewHookStep().Done(e); done {
+		t.Fatal("duplicate blocks counted as done")
+	}
+	r := apply(t, e)
+	if got := read(t, rc); got != "a\n"+b+"mid\nend\n" {
+		t.Fatalf("got %q", got)
+	}
+	write(t, rc, "a\n"+b+"mid\n"+b+"end\n")
+	if err := NewHookStep().Undo(e, r); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, rc); got != "a\nmid\nend\n" {
+		t.Fatalf("undo got %q", got)
+	}
+}
+
+func TestMacBashLoginFiles(t *testing.T) {
+	t.Run("profile only", func(t *testing.T) {
+		e, _ := hookEnv(t, "darwin", nil, nil)
+		e.Shell = "bash"
+		prof := filepath.Join(e.Home, ".profile")
+		write(t, prof, "export P=1\n")
+		r := apply(t, e)
+		bp := read(t, filepath.Join(e.Home, ".bash_profile"))
+		want := block("[ -f ~/.profile ] && . ~/.profile\n[ -f ~/.bashrc ] && . ~/.bashrc", "\n")
+		if bp != want || read(t, prof) != "export P=1\n" {
+			t.Fatalf("bash_profile %q", bp)
+		}
+		if err := NewHookStep().Undo(e, r); err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range []string{".bash_profile", ".bash_profile.oci-assume.bak"} {
+			if _, err := os.Stat(filepath.Join(e.Home, f)); !os.IsNotExist(err) {
+				t.Fatalf("%s left behind: %v", f, err)
+			}
+		}
+	})
+	t.Run("profile sources bashrc", func(t *testing.T) {
+		e, _ := hookEnv(t, "darwin", nil, nil)
+		e.Shell = "bash"
+		write(t, filepath.Join(e.Home, ".profile"), ". \"$HOME/.bashrc\"\n")
+		apply(t, e)
+		bp := read(t, filepath.Join(e.Home, ".bash_profile"))
+		if bp != block("[ -f ~/.profile ] && . ~/.profile", "\n") {
+			t.Fatalf("bash_profile %q", bp)
+		}
+	})
+	t.Run("bash_login", func(t *testing.T) {
+		e, _ := hookEnv(t, "darwin", nil, nil)
+		e.Shell = "bash"
+		bl := filepath.Join(e.Home, ".bash_login")
+		write(t, bl, "x\n")
+		r := apply(t, e)
+		if !strings.Contains(read(t, bl), bashProfileLine) {
+			t.Fatalf("bash_login %q", read(t, bl))
+		}
+		if _, err := os.Stat(filepath.Join(e.Home, ".bash_profile")); !os.IsNotExist(err) {
+			t.Fatal("bash_profile created despite bash_login")
+		}
+		if err := NewHookStep().Undo(e, r); err != nil || read(t, bl) != "x\n" {
+			t.Fatalf("undo %v %q", err, read(t, bl))
+		}
+	})
+}
+
+func TestPwshEditionWithoutPathDescribed(t *testing.T) {
+	core := filepath.Join(t.TempDir(), "profile.ps1")
+	e, _ := hookEnv(t, "windows", nil, map[string]string{
+		"pwsh " + pwshArgs:       core + "\n",
+		"powershell " + pwshArgs: "\r\n",
+	})
+	e.Shell = "pwsh"
+	if d := NewHookStep().Describe(e); !strings.Contains(d, "powershell") || !strings.Contains(d, "did not report") {
+		t.Fatalf("describe %q", d)
+	}
+}
+
+func TestNoPowerShellSkips(t *testing.T) {
+	e, _ := hookEnv(t, "windows", nil, nil)
+	e.Shell = "pwsh"
+	if done, err := NewHookStep().Done(e); err != nil || done {
+		t.Fatalf("done %v %v", done, err)
+	}
+	if err := NewHookStep().Apply(e, &Receipt{}); !errors.Is(err, errNoShell) {
+		t.Fatalf("apply %v", err)
+	}
+}
+
+func TestDetectShellInstallerSkipsParent(t *testing.T) {
+	ps := "ps -o comm= -p " + strconv.Itoa(os.Getppid())
+	e, _ := hookEnv(t, "linux", map[string]string{"OCI_ASSUME_INSTALLER": "1", "SHELL": "/bin/zsh"}, map[string]string{ps: "bash\n"})
+	if got, _ := DetectShell(e, ""); got != "zsh" {
+		t.Fatalf("got %q", got)
+	}
+	old := windowsParent
+	defer func() { windowsParent = old }()
+	windowsParent = func() (string, string) { return "oci-assume.exe", "pwsh.exe" }
+	e, _ = hookEnv(t, "windows", map[string]string{"SHELL": "/bin/bash"}, nil)
+	if got, _ := DetectShell(e, ""); got != "pwsh" {
+		t.Fatalf("windows grandparent: got %q", got)
+	}
+}
+
+func TestLegacyLineStrict(t *testing.T) {
+	e, _ := hookEnv(t, "linux", nil, nil)
+	e.Shell = "zsh"
+	rc := filepath.Join(e.Home, ".zshrc")
+	for _, s := range []string{
+		"ls # eval \"$(oci-assume init zsh)\"\n",
+		"echo oci-assume init zsh\n",
+		"cat <<EOF\neval \"$(oci-assume init zsh)\"\nEOF\n",
+		"<#\neval \"$(oci-assume init zsh)\"\n#>\n",
+	} {
+		write(t, rc, s)
+		if done, _ := NewHookStep().Done(e); done {
+			t.Fatalf("counted as legacy: %q", s)
+		}
+	}
+	for _, s := range []string{"source <(oci-assume init zsh)\n", "eval \"$(oci-assume init zsh)\" # hook\n"} {
+		write(t, rc, s)
+		if done, _ := NewHookStep().Done(e); !done {
+			t.Fatalf("not detected: %q", s)
+		}
+	}
+}
+
+func TestBOMBeforeMarker(t *testing.T) {
+	e, _ := hookEnv(t, "linux", nil, nil)
+	e.Shell = "zsh"
+	rc := filepath.Join(e.Home, ".zshrc")
+	write(t, rc, "\uFEFF"+block(hookLine("zsh"), "\n")+"x\n")
+	if done, err := NewHookStep().Done(e); err != nil || !done {
+		t.Fatalf("done %v %v", done, err)
+	}
+	if err := NewHookStep().Undo(e, &Receipt{}); err != nil || read(t, rc) != "\uFEFFx\n" {
+		t.Fatalf("undo %v %q", err, read(t, rc))
+	}
+}
+
+func TestUndoKeepsNewlineApplyDidNotAdd(t *testing.T) {
+	e, _ := hookEnv(t, "linux", nil, nil)
+	e.Shell = "zsh"
+	rc := filepath.Join(e.Home, ".zshrc")
+	write(t, rc, "a\n")
+	r := apply(t, e)
+	// The user deletes our blank separator and adds a line.
+	write(t, rc, "a\nb\n"+block(hookLine("zsh"), "\n"))
+	if err := NewHookStep().Undo(e, r); err != nil || read(t, rc) != "a\nb\n" {
+		t.Fatalf("undo %v %q", err, read(t, rc))
+	}
+}
+
+func TestUndoCreatedFileBehindSymlinkKeepsLink(t *testing.T) {
+	e, _ := hookEnv(t, "darwin", nil, nil)
+	e.Shell = "bash"
+	real := filepath.Join(t.TempDir(), "bash_profile")
+	write(t, real, block(bashProfileLine, "\n"))
+	bp := filepath.Join(e.Home, ".bash_profile")
+	if err := os.Symlink(real, bp); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := NewHookStep().Undo(e, &Receipt{}); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(bp); err != nil || fi.Mode()&os.ModeSymlink == 0 || read(t, real) != "" {
+		t.Fatalf("link or target wrong: %v", err)
+	}
+}
+
+func TestSourcesBashrcAnchored(t *testing.T) {
+	for s, want := range map[string]bool{
+		". ~/.bashrc\n": true, "source \"$HOME/.bashrc\"; x\n": true,
+		". ~/.bashrc_extra\n": false, ". ~/.bashrc.d/a.sh\n": false,
+	} {
+		p := filepath.Join(t.TempDir(), "f")
+		write(t, p, s)
+		if got := fileSourcesBashrc(p); got != want {
+			t.Fatalf("%q: got %v", s, got)
+		}
+	}
+}
+
+func TestRelativeZDOTDIRFallsBack(t *testing.T) {
+	e, _ := hookEnv(t, "linux", map[string]string{"ZDOTDIR": "rel/dir"}, nil)
+	if got := zshrc(e); got != filepath.Join(e.Home, ".zshrc") {
+		t.Fatalf("got %q", got)
 	}
 }
