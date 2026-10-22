@@ -1,7 +1,8 @@
 #!/bin/sh
 # Installs oci-assume from a GitHub release after verifying its checksum.
-# Usage: install.sh [--version vX.Y.Z]
-# Env: OCI_ASSUME_INSTALL_DIR (default ~/.local/bin), OCI_ASSUME_BASE_URL (test override)
+# Usage: install.sh [--version vX.Y.Z] [--no-setup] [--yes]
+# Env: OCI_ASSUME_INSTALL_DIR (default ~/.local/bin), OCI_ASSUME_BASE_URL (test override),
+#      OCI_ASSUME_NO_SETUP (skip the setup handoff)
 set -eu
 
 REPO="123yogin/oci-assume"
@@ -10,11 +11,15 @@ die() { echo "install.sh: $*" >&2; exit 1; }
 
 main() {
   version=""
+  nosetup=${OCI_ASSUME_NO_SETUP:+1}
+  yes=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --version) [ $# -ge 2 ] || die "--version needs a value"; version=$2; shift 2 ;;
       --version=*) version=${1#--version=}; shift ;;
-      -h|--help) echo "usage: install.sh [--version vX.Y.Z]"; exit 0 ;;
+      --no-setup) nosetup=1; shift ;;
+      --yes|-y) yes=1; shift ;;
+      -h|--help) echo "usage: install.sh [--version vX.Y.Z] [--no-setup] [--yes]"; exit 0 ;;
       *) die "unknown argument: $1" ;;
     esac
   done
@@ -85,6 +90,16 @@ main() {
     *":$dest:"*) ;;
     *) echo "Add $dest to your PATH, e.g.: export PATH=\"$dest:\$PATH\"" >&2 ;;
   esac
+
+  # Hand off to setup only with a real terminal on both stdout and /dev/tty.
+  if [ -z "$nosetup" ] && [ -t 1 ] && { : </dev/tty; } 2>/dev/null; then
+    # shellcheck disable=SC2086
+    if ! OCI_ASSUME_INSTALLER=1 "$dest/oci-assume" setup ${yes:+--yes} </dev/tty; then
+      echo "oci-assume installed; setup did not finish. Re-run: oci-assume setup" >&2
+    fi
+  else
+    echo "Next: oci-assume setup" >&2
+  fi
 }
 
 main "$@"

@@ -1,4 +1,4 @@
-.PHONY: build test shell-test install-test
+.PHONY: build test shell-test install-test install-test-ps
 
 build:
 	go build -o oci-assume ./cmd/oci-assume
@@ -11,3 +11,6 @@ shell-test:
 
 install-test:
 	test/install/test.sh
+
+install-test-ps:
+	pwsh -NoProfile -File test/install/test.ps1

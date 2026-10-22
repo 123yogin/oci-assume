@@ -2,12 +2,24 @@ package cli
 
 import (
 	"fmt"
+	"runtime/debug"
 
 	"github.com/spf13/cobra"
 )
 
+// resolveVersion uses the module version for `go install @vX` builds (a sum marks a real module).
+func resolveVersion(read func() (*debug.BuildInfo, bool)) string {
+	if Version != "dev" {
+		return Version
+	}
+	if bi, ok := read(); ok && bi.Main.Sum != "" && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		return bi.Main.Version
+	}
+	return Version
+}
+
 func versionString() string {
-	return fmt.Sprintf("oci-assume %s (%s, %s)", Version, Commit, Date)
+	return fmt.Sprintf("oci-assume %s (%s, %s)", resolveVersion(debug.ReadBuildInfo), Commit, Date)
 }
 
 func newVersion() *cobra.Command {
