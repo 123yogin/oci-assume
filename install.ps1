@@ -106,7 +106,10 @@ function Install-OciAssume {
         foreach ($line in ($text -split "`r?`n")) {
             if ($line -match '^\s*([0-9A-Fa-f]{64})\s+\*?(\S+)\s*$' -and $Matches[2] -eq $archive) { $want = $Matches[1]; break }
         }
-        if (-not $want) { throw "no checksum entry for $archive; aborting" }
+        if (-not $want) {
+            $head = (@($text -split "`r?`n" | Select-Object -First 5) -join "`n")
+            throw "no checksum entry for $archive; aborting. checksums.txt starts with:`n$head"
+        }
         $got = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $tmp $archive)).Hash
         if ($got -ine $want) { throw "checksum mismatch for $archive (want $want, got $got); aborting" }
 

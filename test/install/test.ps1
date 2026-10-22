@@ -65,6 +65,8 @@ $env:OCI_ASSUME_BASE_URL = (New-Object Uri ((Resolve-Path $rel).Path)).AbsoluteU
 
 function Invoke-Install($dir, [string[]]$more = @()) {
     $env:OCI_ASSUME_INSTALL_DIR = $dir
+    # 5.1 wraps redirected native stderr as errors; under Stop the expected failures would throw.
+    $ErrorActionPreference = 'Continue'
     $out = & $pwsh -NoProfile -File $script -Version v9.9.9 @more 2>&1 | Out-String
     return @{ Code = $LASTEXITCODE; Out = $out }
 }
@@ -89,11 +91,12 @@ Copy-Item $orig (Join-Path $rel $archive) -Force
 [IO.File]::WriteAllText((Join-Path $rel 'checksums.txt'), '', (New-Object Text.UTF8Encoding $false))
 $r = Invoke-Install (Join-Path $T 'none') @('-NoSetup')
 if ($r.Code -eq 0) { Fail 'missing checksum entry installed' }
+if ($r.Out -notmatch 'no checksum entry for') { Fail "no missing-entry message: $($r.Out)" }
 Write-Sums
 
 # 4: bad version rejected.
 $env:OCI_ASSUME_INSTALL_DIR = Join-Path $T 'v'
-& $pwsh -NoProfile -File $script -Version v1.2 -NoSetup *> $null
+& { $ErrorActionPreference = 'Continue'; & $pwsh -NoProfile -File $script -Version v1.2 -NoSetup *> $null }
 if ($LASTEXITCODE -eq 0) { Fail 'bad version accepted' }
 
 # 5: setup handoff, -Yes and env passthrough.

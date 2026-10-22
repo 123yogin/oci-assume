@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -46,10 +47,15 @@ func TestHookPathLineZshUnderHome(t *testing.T) {
 func TestHookPathLineOutsideHomeEscaped(t *testing.T) {
 	e, _ := hookEnv(t, "linux", nil, nil)
 	e.Shell = "bash"
-	dir := filepath.Join(t.TempDir(), `a $b"c`)
+	// `"` is not a legal Windows file-name character; there use the other shell specials.
+	name := `a $b"c`
+	if runtime.GOOS == "windows" {
+		name = "a $b`c'd&e;f"
+	}
+	dir := filepath.Join(t.TempDir(), name)
 	withBinary(t, e, dir, "")
 	apply(t, e)
-	want := `export PATH="` + strings.NewReplacer(`$`, `\$`, `"`, `\"`).Replace(dir) + `:$PATH"`
+	want := `export PATH="` + strings.NewReplacer(`\`, `\\`, `$`, `\$`, `"`, `\"`, "`", "\\`").Replace(dir) + `:$PATH"`
 	if got := read(t, filepath.Join(e.Home, ".bashrc")); !strings.Contains(got, markBegin+"\n"+want+"\n"+hookLine("bash")+"\n") {
 		t.Fatalf("got %q want line %q", got, want)
 	}
