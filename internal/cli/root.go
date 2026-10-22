@@ -393,6 +393,19 @@ func selfHeal(d *deps, cmd *cobra.Command) {
 		logf(d, "self-heal: %v", err)
 		return
 	}
+	// The check above is lock-free; the read-modify-write below holds the receipt lock and skips when busy.
+	release, err := onboard.LockReceipt(cmd.Context(), dir)
+	if err != nil {
+		if !errors.Is(err, lock.ErrTimeout) {
+			logf(d, "self-heal: %v", err)
+		}
+		return
+	}
+	defer release()
+	if r, err = onboard.LoadReceipt(dir); err != nil {
+		logf(d, "self-heal: %v", err)
+		return
+	}
 	prevHeal, prevCheck := r.LastHeal, r.LastCheck
 	_, herr := onboard.SelfHeal(&onboard.Env{GOOS: d.goos, StateDir: dir, Now: d.now}, &r, b, bin)
 	logWarnings(d, b)
@@ -415,23 +428,21 @@ func logWarnings(d *deps, b refresher.Backend) {
 	}
 }
 
-// setConsent records the background job's consent in the receipt (daemon install/uninstall).
+// setConsent records the background job's consent in the receipt (daemon install/uninstall), under the receipt lock.
 func setConsent(d *deps, consented bool) error {
 	dir, err := state.Dir()
 	if err != nil {
 		return err
 	}
-	r, err := onboard.LoadReceipt(dir)
-	if err != nil {
-		return err
-	}
-	if r.Background == nil {
-		if !consented {
-			return nil
+	return onboard.UpdateReceipt(context.Background(), dir, func(r *onboard.Receipt) bool {
+		if r.Background == nil {
+			if !consented {
+				return false
+			}
+			r.Background = &onboard.BackgroundEntry{}
 		}
-		r.Background = &onboard.BackgroundEntry{}
-	}
-	r.Background.Backend, r.Background.Consented = onboard.BackendName(d.goos), consented
-	r.Version = "1"
-	return onboard.SaveReceipt(dir, r)
+		r.Background.Backend, r.Background.Consented = onboard.BackendName(d.goos), consented
+		r.Version = "1"
+		return true
+	})
 }

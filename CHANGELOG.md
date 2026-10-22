@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-## [1.1.0]
+## [1.1.0] - 2026-10-23
 
 One-command onboarding: install, then everything else is `oci-assume setup`.
 
@@ -14,6 +14,7 @@ One-command onboarding: install, then everything else is `oci-assume setup`.
 
 - `oci-assume setup`: offers, in order, the OCI CLI install (Homebrew or winget), the Windows execution policy, the shell hook, background refresh and a first browser login. Each step shows the exact file change or command and asks first; finished steps are skipped. `--yes`, `--dry-run`, `--no-shell`, `--no-background`, `--no-oci-cli`, `--no-login` and `--shell`.
 - `oci-assume uninstall [--purge]`: removes exactly what setup added, using `receipt.json` in the state directory, or by scanning the known startup files when there is no receipt. Safe to run twice.
+- When `oci-assume` on `PATH` is not the binary running setup, the hook block also puts its directory on `PATH`, and setup warns if new shells still will not find it.
 - Marked, reversible shell hook blocks (`# >>> oci-assume >>>`) for zsh, bash (with macOS `.bash_profile` sourcing), fish (`conf.d` drop-in) and every installed PowerShell's `$PROFILE.CurrentUserAllHosts`. Existing unmarked hook lines are respected; symlinked rc files are written through.
 - `install.ps1`: `irm https://raw.githubusercontent.com/123yogin/oci-assume/main/install.ps1 | iex` downloads and checksum-verifies the release, adds it to the user `PATH` and runs setup.
 - `install.sh` runs setup when a terminal is available; new `--no-setup` and `--yes` flags.

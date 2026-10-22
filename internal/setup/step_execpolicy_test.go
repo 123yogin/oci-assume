@@ -99,7 +99,7 @@ func TestExecPolicyPwsh7AlsoSet(t *testing.T) {
 	if err := s.Undo(e, &Receipt{}); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"pwsh: Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force", "pwsh: Set-ExecutionPolicy Restricted -Scope CurrentUser -Force"}
+	want := []string{"pwsh: Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force"}
 	if !reflect.DeepEqual(f.sets, want) {
 		t.Fatalf("sets %v", f.sets)
 	}
@@ -144,23 +144,39 @@ func TestExecPolicyReadFailureSkips(t *testing.T) {
 	}
 }
 
-func TestExecPolicyUndoRestores(t *testing.T) {
-	e, _ := testEnv(t, "", true)
-	f := &fakePS{lists: map[string]string{"powershell": policyList("Undefined", "Undefined", "AllSigned", "AllSigned")}}
-	f.install(e, "powershell")
+func TestExecPolicyUndoPrintsRestoreCommand(t *testing.T) {
+	e, out := testEnv(t, "", true)
+	f := &fakePS{lists: map[string]string{
+		"powershell": policyList("Undefined", "Undefined", "AllSigned", "AllSigned"),
+		"pwsh":       policyList("Undefined", "Undefined", "Undefined", "Restricted"),
+	}}
+	f.install(e, "powershell", "pwsh")
 	s := NewExecPolicyStep()
 	if err := s.Apply(e, &Receipt{}); err != nil {
 		t.Fatal(err)
 	}
+	out.Reset()
 	if err := s.Undo(e, &Receipt{}); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.sets) != 2 || f.sets[1] != "powershell: Set-ExecutionPolicy AllSigned -Scope CurrentUser -Force" {
-		t.Fatalf("sets %v", f.sets)
+	if len(f.sets) != 2 {
+		t.Fatalf("undo changed the policy: %v", f.sets)
 	}
-	// Nothing recorded any more, so a second undo changes nothing.
-	if err := s.Undo(e, &Receipt{}); err != nil || len(f.sets) != 2 {
-		t.Fatalf("second undo: %v %v", err, f.sets)
+	for _, want := range []string{
+		"To restore your previous PowerShell execution policy run: Set-ExecutionPolicy AllSigned -Scope CurrentUser (in powershell)\n",
+		"To restore your previous PowerShell execution policy run: Set-ExecutionPolicy Undefined -Scope CurrentUser (in pwsh)\n",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q in %q", want, out.String())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(e.StateDir, policyPrevFile)); !os.IsNotExist(err) {
+		t.Fatalf("prev file kept: %v", err)
+	}
+	// Nothing recorded any more, so a second undo prints nothing.
+	out.Reset()
+	if err := s.Undo(e, &Receipt{}); err != nil || out.Len() != 0 {
+		t.Fatalf("second undo: %v %q", err, out.String())
 	}
 }
 

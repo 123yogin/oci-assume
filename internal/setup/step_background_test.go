@@ -2,6 +2,7 @@ package setup
 
 import (
 	"errors"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -40,7 +41,7 @@ func (f *fakeBackend) InstalledBin() (string, error) { return f.bin, nil }
 
 func bgEnv(t *testing.T) *Env {
 	t.Helper()
-	return &Env{GOOS: "darwin", Home: t.TempDir(), StateDir: t.TempDir(), Now: time.Now}
+	return &Env{GOOS: "darwin", Home: t.TempDir(), StateDir: t.TempDir(), Now: time.Now, Out: io.Discard}
 }
 
 func testBgStep(b *fakeBackend) *backgroundStep {
@@ -196,5 +197,33 @@ func TestSelfHealChecksAtMostEvery10Min(t *testing.T) {
 	}
 	if b.statusCalls != 2 || b.installs != 0 {
 		t.Fatalf("status calls %d installs %d", b.statusCalls, b.installs)
+	}
+}
+
+func TestBackgroundDescribeNamesExistingAgent(t *testing.T) {
+	e, b := bgEnv(t), &fakeBackend{}
+	s := testBgStep(b)
+	if d := s.Describe(e); strings.Contains(d, "replaces") {
+		t.Fatalf("fresh install says replaces: %q", d)
+	}
+	b.installed, b.bin = true, "/usr/local/bin/oci-assume"
+	if d := s.Describe(e); !strings.Contains(d, "replaces the existing agent (runs /usr/local/bin/oci-assume)") {
+		t.Fatalf("describe %q", d)
+	}
+}
+
+func TestBackgroundUndoReportsRemoval(t *testing.T) {
+	e, b := bgEnv(t), &fakeBackend{installed: true}
+	out := &strings.Builder{}
+	e.Out = out
+	if err := testBgStep(b).Undo(e, &Receipt{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Removed the background refresh job") {
+		t.Fatalf("output %q", out.String())
+	}
+	out.Reset()
+	if err := testBgStep(b).Undo(e, &Receipt{}); err != nil || out.Len() != 0 {
+		t.Fatalf("nothing installed but printed %q (%v)", out.String(), err)
 	}
 }

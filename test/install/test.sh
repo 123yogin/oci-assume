@@ -82,6 +82,8 @@ pty() {
 if command -v script >/dev/null 2>&1; then
   : > "$SETUP_LOG"; pty "$T/p1" ""
   grep -qx 'setup setup inst=1' "$SETUP_LOG" || fail "setup not run on pty: $(cat "$SETUP_LOG")"
+  # The PATH hint is repeated after setup's output, so it is the last thing the user sees.
+  [ "$(grep -c "Add $T/p1 to your PATH" "$T/pty.out")" = 2 ] || fail "PATH hint not repeated after setup: $(cat "$T/pty.out")"
   : > "$SETUP_LOG"; pty "$T/p2" "--yes"
   grep -qx 'setup setup --yes inst=1' "$SETUP_LOG" || fail "--yes not passed: $(cat "$SETUP_LOG")"
   : > "$SETUP_LOG"; pty "$T/p3" "--no-setup"

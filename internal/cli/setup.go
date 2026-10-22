@@ -36,10 +36,11 @@ func setupEnv(cmd *cobra.Command, d *deps, sh string) (*onboard.Env, error) {
 			c.Stdin, c.Stdout, c.Stderr = d.stdin, d.stderr, d.stderr
 			return c.Run()
 		},
-		LookPath: exec.LookPath,
-		Getenv:   os.Getenv,
-		Now:      d.now,
-		Ctx:      cmd.Context(),
+		LookPath:   exec.LookPath,
+		Executable: os.Executable,
+		Getenv:     os.Getenv,
+		Now:        d.now,
+		Ctx:        cmd.Context(),
 	}, nil
 }
 

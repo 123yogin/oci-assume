@@ -35,7 +35,7 @@ func TestDaemonUninstallStopsSelfHeal(t *testing.T) {
 	if code := runWith(e, d, "daemon", "install"); code != 0 {
 		t.Fatalf("install exit %d", code)
 	}
-	if r, _ := onboard.LoadReceipt(dir); r.Background == nil || !r.Background.Consented || r.Background.Backend != "launchd" {
+	if r, _ := onboard.LoadReceipt(dir); r.Background == nil || !r.Background.Consented || r.Background.Backend != onboard.BackendName(d.goos) {
 		t.Fatalf("install did not record consent: %+v", r.Background)
 	}
 	if code := runWith(e, d, "daemon", "uninstall"); code != 0 {
@@ -93,4 +93,30 @@ func TestTickFutureStampIsStale(t *testing.T) {
 	if fi, _ := os.Stat(stamp); fi.ModTime().After(time.Now().Add(time.Minute)) {
 		t.Fatal("stamp not reset")
 	}
+}
+
+func TestSelfHealSkipsSilentlyWhileReceiptLocked(t *testing.T) {
+	e := setup(t, "ok")
+	e.token(time.Hour)
+	dir := saveConsent(t, true)
+	release, err := onboard.LockReceipt(t.Context(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	d := healDeps(e)
+	logFile := filepath.Join(t.TempDir(), "bg.log")
+	d.logPath = func() (string, error) { return logFile, nil }
+	runWith(e, d, "refresh", "dev")
+	if e.backend.installed != "" {
+		t.Fatal("healed while another process held the receipt lock")
+	}
+	if fileHas(logFile, "self-heal") {
+		t.Fatal("lock timeout was logged")
+	}
+}
+
+func fileHas(p, s string) bool {
+	b, err := os.ReadFile(p)
+	return err == nil && strings.Contains(string(b), s)
 }

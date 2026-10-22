@@ -98,10 +98,13 @@ function Install-OciAssume {
             $wc.DownloadFile("$base/checksums.txt", (Join-Path $tmp 'checksums.txt'))
         } finally { $wc.Dispose() }
 
+        # Decode by hand: Get-Content on 5.1 guesses the encoding; accept UTF-8/ASCII/UTF-16, BOM and CRLF.
         $want = $null
-        foreach ($line in Get-Content (Join-Path $tmp 'checksums.txt')) {
-            $f = $line.Trim() -split '\s+'
-            if ($f.Count -ge 2 -and ($f[1] -eq $archive -or $f[1] -eq "*$archive")) { $want = $f[0]; break }
+        $bytes = [IO.File]::ReadAllBytes((Join-Path $tmp 'checksums.txt'))
+        $enc = if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) { [Text.Encoding]::Unicode } else { [Text.Encoding]::UTF8 }
+        $text = $enc.GetString($bytes).Replace([string][char]0xFEFF, '')
+        foreach ($line in ($text -split "`r?`n")) {
+            if ($line -match '^\s*([0-9A-Fa-f]{64})\s+\*?(\S+)\s*$' -and $Matches[2] -eq $archive) { $want = $Matches[1]; break }
         }
         if (-not $want) { throw "no checksum entry for $archive; aborting" }
         $got = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $tmp $archive)).Hash

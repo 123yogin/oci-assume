@@ -55,7 +55,7 @@ if ($isWin) {
     # zip(1) keeps the exec bit so the fake can run on Unix.
     Push-Location $pkg; try { & zip -q (Join-Path $rel $archive) 'oci-assume.exe' } finally { Pop-Location }
 }
-function Write-Sums { $h = (Get-FileHash -Algorithm SHA256 (Join-Path $rel $archive)).Hash.ToLower(); Set-Content -Path (Join-Path $rel 'checksums.txt') -Value "$h  $archive" }
+function Write-Sums { $h = (Get-FileHash -Algorithm SHA256 (Join-Path $rel $archive)).Hash.ToLower(); [IO.File]::WriteAllText((Join-Path $rel 'checksums.txt'), "$h  $archive`n", (New-Object Text.UTF8Encoding $false)) }
 Write-Sums
 $orig = Join-Path $T 'orig.zip'; Copy-Item (Join-Path $rel $archive) $orig
 
@@ -86,7 +86,7 @@ if (Test-Path (Exe 'bad')) { Fail 'tampered install left a binary' }
 
 # 3: missing checksum entry aborts.
 Copy-Item $orig (Join-Path $rel $archive) -Force
-Set-Content -Path (Join-Path $rel 'checksums.txt') -Value ''
+[IO.File]::WriteAllText((Join-Path $rel 'checksums.txt'), '', (New-Object Text.UTF8Encoding $false))
 $r = Invoke-Install (Join-Path $T 'none') @('-NoSetup')
 if ($r.Code -eq 0) { Fail 'missing checksum entry installed' }
 Write-Sums

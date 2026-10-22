@@ -30,7 +30,7 @@ Writes are atomic and keep the file's mode; a symlinked rc file is written throu
 
 ## stdout and stderr
 
-- **stdout** carries only shell-evaluable lines on the assume and `--unset` paths, or command data for `prompt`, `status --json` and `init`.
+- **stdout** carries only shell-evaluable lines on the assume and `--unset` paths, or command data for `prompt`, `status --json` and `init`. `setup`, `uninstall` and `doctor` also print their report to stdout (stderr under `OCI_ASSUME_EVAL=1`).
 - **stderr** carries everything meant for a human: progress, errors and the fix command.
 
 `OCI_ASSUME_EVAL=1` is the guard. The hook sets it only on the eval path. When it is set, the binary routes all non-export stdout, such as `--help` text, to stderr, so nothing but export lines can reach `eval`.
@@ -82,7 +82,7 @@ There is no fallback to a shared temp directory. If neither is available (for ex
 |---|---|
 | macOS | launchd agent `io.github.123yogin.oci-assume` in `~/Library/LaunchAgents`; log at `~/Library/Logs/oci-assume.log` |
 | Linux | systemd user timer `oci-assume.timer` (and `oci-assume.service`); falls back to a crontab line marked `# oci-assume` when `systemctl --user` is unavailable |
-| Windows | Task Scheduler task `oci-assume-refresh`, every 30 minutes and at logon; it runs the windowless `oci-assume-bg.exe` next to `oci-assume.exe`, so no console window flashes |
+| Windows | Task Scheduler task `oci-assume-refresh`, every 30 minutes and at logon; it runs the windowless `oci-assume-bg.exe` next to `oci-assume.exe`, so no console window flashes. `go install` builds only `oci-assume.exe`, so the task runs it directly and a console window briefly flashes each run |
 
 The entry records `PATH`, plus `OCI_CLI_CONFIG_FILE`, `OCI_ASSUME_STATE_DIR` and `OCI_ASSUME_OCI_BIN` when they are set at install time, so the job sees the same config as your shell. Re-run `daemon install` after changing them. The cron line discards output; results go to the state file.
 
@@ -90,11 +90,11 @@ The entry records `PATH`, plus `OCI_CLI_CONFIG_FILE`, `OCI_ASSUME_STATE_DIR` and
 
 ### Self-heal
 
-If the receipt says you agreed to background refresh, every `oci-assume` command (except `prompt`, `init`, `setup`, `uninstall`, `daemon`, `doctor`, `version`, `help` and `completion`) checks the job. When it is missing, cannot be read, or points at a binary that no longer exists (for example after a Homebrew upgrade or a moved install), the command reinstalls it silently. The check runs at most once per 10 minutes, and failures go to the log, never to your terminal. A job you declined or removed with `daemon uninstall` is never reinstalled.
+If the receipt says you agreed to background refresh, every `oci-assume` command (except `prompt`, `init`, `setup`, `uninstall`, `daemon`, `doctor`, `version`, `help` and `completion`) checks the job. When it is missing, cannot be read, or points at a binary that no longer exists (for example after a moved or deleted install), the command reinstalls it silently. The check runs at most once per 10 minutes, and failures go to the log, never to your terminal. A job you declined or removed with `daemon uninstall` is never reinstalled.
 
 ### Prompt tick
 
-The hook's prompt helper runs `oci-assume prompt --tick`. Its output is the same as `prompt`, but when the active profile is a session profile with less than 45 minutes left, it also starts a detached `oci-assume refresh <profile> --background` and returns at once. It starts at most one per profile every 5 minutes (a timestamp file in the state directory), skips when another refresh holds the profile's lock, and never runs `oci` in the prompt process. This keeps sessions alive while you work even where no scheduler is available.
+The hook's prompt helper runs `oci-assume prompt --tick`. Its output is the same as `prompt`, but when the active profile is a session profile with less than 45 minutes left, it also starts a detached `oci-assume refresh <profile> --background` and returns at once. It starts at most one per profile every 5 minutes (a timestamp file in the state directory), skips when another refresh holds the profile's lock, and never runs `oci` in the prompt process. This keeps sessions alive while you work even where no scheduler is available. Only the hook's prompt helper (`oci_assume_prompt`, `OciAssumePrompt`) and prompts that call `oci-assume prompt --tick` themselves get the tick; plain `oci-assume prompt` never starts a refresh.
 
 Notifications use `osascript` (macOS), `notify-send` (Linux) or a PowerShell toast (Windows), and are skipped silently when none is available.
 

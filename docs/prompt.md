@@ -12,7 +12,7 @@ Add `--json` for a machine-readable form:
 
 `state` is `ok`, `warn` (under the refresh threshold, 10 minutes by default) or `expired`.
 
-The shell hook from `oci-assume init` defines a helper that wraps this as `[oci dev 42m]` (or prints nothing). The snippets below use it.
+The shell hook from `oci-assume init` defines a helper that wraps this as `[oci dev 42m]` (or prints nothing). The snippets below use it. The helper calls `oci-assume prompt --tick`, which also refreshes a session that is about to expire (see [how it works](how-it-works.md#prompt-tick)); a prompt that calls plain `oci-assume prompt` only displays. The Starship and oh-my-posh snippets call `--tick` directly for the same reason.
 
 ## zsh
 
@@ -47,7 +47,7 @@ Add to `~/.config/starship.toml`:
 
 ```toml
 [custom.oci]
-command = "oci-assume prompt"
+command = "oci-assume prompt --tick"
 when = 'test -n "$OCI_CLI_PROFILE"'
 format = "[oci $output]($style) "
 style = "yellow"
@@ -64,7 +64,7 @@ Add a segment to your theme:
   "foreground": "yellow",
   "template": "oci {{ .Output }} ",
   "properties": {
-    "command": "oci-assume prompt"
+    "command": "oci-assume prompt --tick"
   }
 }
 ```

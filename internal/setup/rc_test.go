@@ -305,7 +305,7 @@ func TestUninstallKeepsUserEdits(t *testing.T) {
 	if err := NewHookStep().Undo(e, r); err != nil {
 		t.Fatal(err)
 	}
-	want := "top\n" + cur[:i] + "after\n" + cur[j:] + "bottom"
+	want := "top\n" + strings.TrimSuffix(cur[:i], "\n") + "after\n" + cur[j:] + "bottom"
 	if got := read(t, rc); got != want {
 		t.Fatalf("got %q want %q", got, want)
 	}
@@ -671,5 +671,62 @@ func TestUndoCreatedThenEditedNoBackup(t *testing.T) {
 	}
 	if _, err := os.Stat(rc + bakSuffix); !os.IsNotExist(err) {
 		t.Fatalf("stray backup: %v", err)
+	}
+}
+
+func TestUndoAfterUserEditDropsSeparatorAndBackup(t *testing.T) {
+	e, _ := hookEnv(t, "linux", nil, nil)
+	e.Shell = "zsh"
+	rc := filepath.Join(e.Home, ".zshrc")
+	write(t, rc, "a\n")
+	r := apply(t, e)
+	write(t, rc, read(t, rc)+"mine\n")
+	if err := NewHookStep().Undo(e, r); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, rc); got != "a\nmine\n" {
+		t.Fatalf("got %q", got)
+	}
+	if _, err := os.Stat(rc + bakSuffix); !os.IsNotExist(err) {
+		t.Fatalf("backup left: %v", err)
+	}
+}
+
+func TestUndoReportsEachChange(t *testing.T) {
+	e, out := hookEnv(t, "linux", nil, nil)
+	e.Shell = "zsh"
+	write(t, filepath.Join(e.Home, ".zshrc"), "a\n")
+	r := apply(t, e)
+	e.Shell = "fish"
+	r.Files = append(r.Files, apply(t, e).Files...)
+	e.Shell = "bash"
+	r.Files = append(r.Files, apply(t, e).Files...)
+	if err := NewHookStep().Undo(e, r); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Removed the oci-assume block from " + filepath.Join("~", ".zshrc") + "\n",
+		"Deleted " + filepath.Join("~", ".config", "fish", "conf.d", "oci-assume.fish") + "\n",
+		"Deleted " + filepath.Join("~", ".bashrc") + "\n",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q in %q", want, out.String())
+		}
+	}
+	out.Reset()
+	if err := NewHookStep().Undo(e, &Receipt{}); err != nil || out.Len() != 0 {
+		t.Fatalf("second undo %v printed %q", err, out.String())
+	}
+}
+
+func TestUndoReportsLegacyLines(t *testing.T) {
+	e, out := hookEnv(t, "linux", nil, nil)
+	write(t, filepath.Join(e.Home, ".bashrc"), "x\neval \"$(oci-assume init bash)\"\n")
+	if err := NewHookStep().Undo(e, &Receipt{}); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join("~", ".bashrc") + ":2"
+	if !strings.Contains(out.String(), want) || !strings.Contains(out.String(), "oci-assume init") {
+		t.Fatalf("output %q", out.String())
 	}
 }

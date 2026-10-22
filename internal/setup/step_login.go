@@ -18,8 +18,19 @@ import (
 // loginTimeout matches the default --login-timeout for a browser login.
 const loginTimeout = 5 * time.Minute
 
-// notOnPath is the skip reason when oci is missing, e.g. right after a winget install.
-const notOnPath = "the OCI CLI is not on PATH yet; open a new terminal, then run oci-assume setup"
+// Skip reasons when oci is missing: never installed, or installed by setup but not on this PATH yet (e.g. winget).
+const (
+	notInstalled = "the OCI CLI is not installed; install it, then run oci-assume setup"
+	notOnPath    = "the OCI CLI is installed but not on PATH yet; open a new terminal, then run oci-assume setup"
+)
+
+// missingReason picks between the two by whether setup recorded installing the OCI CLI.
+func missingReason(e *Env) string {
+	if r, err := LoadReceipt(e.StateDir); err == nil && r.OCICLI != "" {
+		return notOnPath
+	}
+	return notInstalled
+}
 
 var (
 	profileRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -53,9 +64,9 @@ func (s *loginStep) Done(*Env) (bool, error) {
 }
 
 // SkipReason skips without prompting when the oci CLI cannot be found.
-func (s *loginStep) SkipReason(*Env) string {
+func (s *loginStep) SkipReason(e *Env) string {
 	if _, err := s.newRunner(); err != nil {
-		return notOnPath
+		return missingReason(e)
 	}
 	return ""
 }
@@ -86,7 +97,7 @@ func loadConfig(path string) ([]ociconfig.Profile, error) {
 func (s *loginStep) Apply(e *Env, _ *Receipt) error {
 	r, err := s.newRunner()
 	if err != nil {
-		return fmt.Errorf("%w: %s", ErrSkipped, notOnPath)
+		return fmt.Errorf("%w: %s", ErrSkipped, missingReason(e))
 	}
 	_, err = LoginFlow(e.Context(), e, s.configPath(), func(ctx context.Context, name, region string) error {
 		return ensure.Login(ctx, r, ociconfig.Profile{Name: name}, region, loginTimeout)

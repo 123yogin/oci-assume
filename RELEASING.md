@@ -25,7 +25,7 @@
      checksums.txt
    ```
 
-6. Smoke test: `brew install --cask 123yogin/tap/oci-assume` and `oci-assume version`; `scoop bucket add 123yogin https://github.com/123yogin/scoop-bucket && scoop install oci-assume`; `go install github.com/123yogin/oci-assume/cmd/oci-assume@<tag>` and `oci-assume version` shows the tag; the curl one-liner with `HOME` set to a temp dir. The `irm | iex` path is covered by the CI `windows-setup-smoke` job.
+6. Smoke test: `brew install --cask 123yogin/tap/oci-assume` and `oci-assume version`; `scoop bucket add 123yogin https://github.com/123yogin/scoop-bucket && scoop install oci-assume`; `go install github.com/123yogin/oci-assume/cmd/oci-assume@<tag>` and `oci-assume version` shows the tag; the curl one-liner with `HOME` set to a temp dir and `--no-setup` (or `OCI_ASSUME_NO_SETUP=1`). launchd agents, systemd user units and scheduled tasks are per user, not per `HOME`, so a setup run under a temp `HOME` would replace your real background job. The `irm | iex` path is covered by the CI `windows-setup-smoke` job.
 
 ## winget
 

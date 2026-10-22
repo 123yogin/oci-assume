@@ -202,9 +202,9 @@ func contains(ss []string, s string) bool {
 func HookTargets(e *Env, sh string) ([]Target, error) {
 	switch sh {
 	case "zsh":
-		return []Target{{zshrc(e), "block", hookLine(sh)}}, nil
+		return []Target{hookTarget(e, sh, zshrc(e), "block")}, nil
 	case "bash":
-		t := []Target{{filepath.Join(e.Home, ".bashrc"), "block", hookLine(sh)}}
+		t := []Target{hookTarget(e, sh, filepath.Join(e.Home, ".bashrc"), "block")}
 		if e.GOOS == "darwin" {
 			if lt, ok := bashLoginTarget(e); ok {
 				t = append(t, lt)
@@ -212,8 +212,7 @@ func HookTargets(e *Env, sh string) ([]Target, error) {
 		}
 		return t, nil
 	case "fish":
-		p := filepath.Join(fishConfDir(e), "conf.d", "oci-assume.fish")
-		return []Target{{p, "dropin", fishHeader + hookLine(sh) + "\n"}}, nil
+		return []Target{hookTarget(e, sh, filepath.Join(fishConfDir(e), "conf.d", "oci-assume.fish"), "dropin")}, nil
 	case "pwsh":
 		ps, _ := pwshProfiles(e)
 		if len(ps) == 0 {
@@ -221,11 +220,112 @@ func HookTargets(e *Env, sh string) ([]Target, error) {
 		}
 		var t []Target
 		for _, p := range ps {
-			t = append(t, Target{p, "block", hookLine(sh)})
+			t = append(t, hookTarget(e, sh, p, "block"))
 		}
 		return t, nil
 	}
 	return nil, fmt.Errorf("unsupported shell %q", sh)
+}
+
+// hookTarget adds a PATH line when oci-assume does not resolve to this binary, or when the file already has it.
+func hookTarget(e *Env, sh, path, kind string) Target {
+	wrap := func(body string) string {
+		if kind == "dropin" {
+			return fishHeader + body + "\n"
+		}
+		return body
+	}
+	t := Target{path, kind, wrap(hookLine(sh))}
+	dir, needed := BinDir(e)
+	if dir == "" {
+		return t
+	}
+	withPath := Target{path, kind, wrap(pathLine(e, sh, dir) + "\n" + hookLine(sh))}
+	if needed {
+		return withPath
+	}
+	if ok, _ := targetDone(withPath); ok {
+		return withPath
+	}
+	return t
+}
+
+// BinDir is the running binary's directory; needed is true when `oci-assume` on PATH is not this binary.
+// dir is "" when unknown or when the binary is not named oci-assume, since a PATH line would not help.
+func BinDir(e *Env) (dir string, needed bool) {
+	if e.Executable == nil {
+		return "", false
+	}
+	exe, err := e.Executable()
+	if err != nil || exe == "" {
+		return "", false
+	}
+	if n := strings.ToLower(filepath.Base(exe)); n != "oci-assume" && n != "oci-assume.exe" {
+		return "", false
+	}
+	if e.LookPath != nil {
+		if p, err := e.LookPath("oci-assume"); err == nil && samePath(e, p, exe) {
+			return filepath.Dir(exe), false
+		}
+	}
+	return filepath.Dir(exe), true
+}
+
+func samePath(e *Env, a, b string) bool {
+	if r, err := filepath.EvalSymlinks(a); err == nil {
+		a = r
+	}
+	if r, err := filepath.EvalSymlinks(b); err == nil {
+		b = r
+	}
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if e.GOOS == "windows" || e.GOOS == "darwin" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+// pathLine prepends dir to PATH; POSIX shells write a dir under HOME as "$HOME/...".
+func pathLine(e *Env, sh, dir string) string {
+	switch sh {
+	case "fish":
+		return `fish_add_path -g "` + homeRel(e, dir, `\`, `"`, `$`) + `"`
+	case "pwsh":
+		sep, v := ":", "$env:PATH"
+		if e.GOOS == "windows" {
+			sep, v = ";", "$env:Path"
+		}
+		q := strings.NewReplacer("`", "``", `"`, "`\"", "$", "`$").Replace(dir)
+		return v + ` = "` + q + sep + `" + ` + v
+	}
+	return `export PATH="` + homeRel(e, dir, `\`, `"`, `$`, "`") + `:$PATH"`
+}
+
+// homeRel escapes dir for a double-quoted string, writing a HOME prefix as $HOME.
+func homeRel(e *Env, dir string, specials ...string) string {
+	var pairs []string
+	for _, c := range specials {
+		pairs = append(pairs, c, `\`+c)
+	}
+	esc := strings.NewReplacer(pairs...).Replace
+	for _, h := range []string{e.Home, evalOr(e.Home)} {
+		for _, d := range []string{dir, evalOr(dir)} {
+			if rel, err := filepath.Rel(h, d); h != "" && err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				if rel == "." {
+					return "$HOME"
+				}
+				return "$HOME/" + esc(filepath.ToSlash(rel))
+			}
+		}
+	}
+	return esc(dir)
+}
+
+func evalOr(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return p
 }
 
 // bashLoginTarget picks the macOS login file that must source .bashrc; ok is false when one already does.
@@ -298,13 +398,17 @@ func legacyFiles(e *Env, sh string, targets []Target) []string {
 }
 
 // hasLegacyLine reports a live eval/source/pipe of `oci-assume init` outside our markers, comments and heredocs.
-func hasLegacyLine(p string) bool {
+func hasLegacyLine(p string) bool { return len(legacyLines(p)) > 0 }
+
+// legacyLines returns the 1-based line numbers of hasLegacyLine's matches.
+func legacyLines(p string) []int {
 	b, err := os.ReadFile(p) // #nosec G304 -- fixed rc path under HOME
 	if err != nil {
-		return false
+		return nil
 	}
+	var out []int
 	in, psComment, heredoc := false, false, ""
-	for _, l := range strings.Split(string(b), "\n") {
+	for i, l := range strings.Split(string(b), "\n") {
 		l = strings.TrimSpace(strings.TrimPrefix(l, bom))
 		switch {
 		case heredoc != "":
@@ -327,11 +431,11 @@ func hasLegacyLine(p string) bool {
 				continue
 			}
 			if legacyHook.MatchString(code) {
-				return true
+				out = append(out, i+1)
 			}
 		}
 	}
-	return false
+	return out
 }
 
 // stripComment cuts a shell-style trailing comment that is outside quotes.
@@ -430,18 +534,25 @@ func withBlock(s, body, goos string) (string, error) {
 	return s + eol + b, nil
 }
 
-// withoutBlock removes every block; at EOF it drops the separator EOL only when it matches what withBlock wrote.
+// withoutBlock removes every block and the blank separator line before it; at EOF it also drops
+// the EOL withBlock added to a file without a trailing newline (it then matches the backup).
 func withoutBlock(s, bak string, hasBak bool) (string, error) {
 	bs, err := blocks(s)
 	if err != nil || len(bs) == 0 {
 		return s, err
 	}
+	eol := eolOf(s, "")
+	atEOF := bs[len(bs)-1].end == len(s)
+	for i := range bs {
+		if strings.HasSuffix(s[:bs[i].start], eol+eol) {
+			bs[i].start -= len(eol)
+		}
+	}
 	out := cut(s, bs, "")
-	if bs[len(bs)-1].end != len(s) {
+	if !atEOF {
 		return out, nil
 	}
-	eol := eolOf(s, "")
-	if trimmed, ok := strings.CutSuffix(out, eol); ok && (strings.HasSuffix(out, eol+eol) || (hasBak && trimmed == bak)) {
+	if trimmed, ok := strings.CutSuffix(out, eol); ok && hasBak && trimmed == bak {
 		return trimmed, nil
 	}
 	return out, nil
@@ -563,51 +674,58 @@ func applyTarget(e *Env, t Target) error {
 	return writeRC(t.Path, real, s, next, mode, exists)
 }
 
-// undoFile removes our blocks or the drop-in; a file setup created is deleted (emptied if it is a symlink).
-func undoFile(f FileEntry) error {
+// undoFile removes our blocks or the drop-in and deletes the backup; a file setup created is deleted
+// (emptied if it is a symlink). It returns what it did for the uninstall report, or "".
+func undoFile(e *Env, f FileEntry) (string, error) {
 	if f.Kind == "dropin" {
-		return removeOrEmpty(f.Path)
+		return removeOrEmpty(e, f.Path)
 	}
 	real, s, mode, exists, err := readRC(f.Path)
 	if err != nil || !exists {
-		return err
+		return "", err
 	}
 	bak, berr := os.ReadFile(f.Path + bakSuffix) // #nosec G304 -- our own backup path
 	hasBak := berr == nil
 	next, err := withoutBlock(s, string(bak), hasBak)
 	if err != nil {
-		return fmt.Errorf("%s: %w", f.Path, err)
+		return "", fmt.Errorf("%s: %w", f.Path, err)
 	}
 	if next == s {
-		return nil
+		return "", nil
 	}
 	if mode&0o200 == 0 {
-		return fmt.Errorf("%s is read-only; remove the oci-assume block by hand", f.Path)
+		return "", fmt.Errorf("%s is read-only; remove the oci-assume block by hand", f.Path)
 	}
+	var did string
 	if next == "" && !hasBak {
-		return removeOrEmpty(f.Path)
+		did, err = removeOrEmpty(e, f.Path)
+	} else {
+		did, err = "Removed the oci-assume block from "+tilde(e, f.Path), atomicWrite(real, next, mode)
 	}
-	if hasBak && next == string(bak) {
-		if err := atomicWrite(real, next, mode); err != nil {
-			return err
-		}
-		return os.Remove(f.Path + bakSuffix)
+	if err != nil {
+		return "", err
 	}
-	return atomicWrite(real, next, mode)
+	if err := os.Remove(f.Path + bakSuffix); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return did, err
+	}
+	return did, nil
 }
 
 // removeOrEmpty deletes p, but never through a symlink: a linked target is emptied instead.
-func removeOrEmpty(p string) error {
+func removeOrEmpty(e *Env, p string) (string, error) {
 	if isLink(p) {
 		real, s, mode, exists, err := readRC(p)
 		if err != nil || !exists || s == "" {
-			return err
+			return "", err
 		}
-		return atomicWrite(real, "", mode)
+		return "Emptied " + tilde(e, real) + " (linked from " + tilde(e, p) + ")", atomicWrite(real, "", mode)
 	}
 	err := os.Remove(p)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return "", nil
 	}
-	return err
+	if err != nil {
+		return "", err
+	}
+	return "Deleted " + tilde(e, p), nil
 }

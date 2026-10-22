@@ -86,10 +86,12 @@ main() {
   mv -f "$dest/oci-assume.new" "$dest/oci-assume"
   echo "Installed oci-assume $version to $dest/oci-assume" >&2
 
+  pathhint=""
   case ":$PATH:" in
     *":$dest:"*) ;;
-    *) echo "Add $dest to your PATH, e.g.: export PATH=\"$dest:\$PATH\"" >&2 ;;
+    *) pathhint="Add $dest to your PATH, e.g.: export PATH=\"$dest:\$PATH\"" ;;
   esac
+  [ -z "$pathhint" ] || echo "$pathhint" >&2
 
   # Hand off to setup only with a real terminal on both stdout and /dev/tty.
   if [ -z "$nosetup" ] && [ -t 1 ] && { : </dev/tty; } 2>/dev/null; then
@@ -97,6 +99,8 @@ main() {
     if ! OCI_ASSUME_INSTALLER=1 "$dest/oci-assume" setup ${yes:+--yes} </dev/tty; then
       echo "oci-assume installed; setup did not finish. Re-run: oci-assume setup" >&2
     fi
+    # Repeat the hint: setup's output has scrolled it away.
+    [ -z "$pathhint" ] || echo "$pathhint" >&2
   else
     echo "Next: oci-assume setup" >&2
   fi

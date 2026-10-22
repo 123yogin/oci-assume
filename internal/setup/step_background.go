@@ -50,7 +50,30 @@ func (s *backgroundStep) Describe(e *Env) string {
 	default:
 		where = "scheduler entry"
 	}
-	return fmt.Sprintf("Background refresh: install the %s\n  runs every 30 min: %s refresh --all --background", where, bin)
+	d := fmt.Sprintf("Background refresh: install the %s\n  runs every 30 min: %s refresh --all --background", where, bin)
+	if old, ok := s.installed(e); ok {
+		d += "\n  replaces the existing agent"
+		if old != "" {
+			d += " (runs " + old + ")"
+		}
+	}
+	return d
+}
+
+// installed reports an existing scheduler entry and, when readable, the binary it runs.
+func (s *backgroundStep) installed(e *Env) (bin string, ok bool) {
+	b, err := s.backend(e.GOOS)
+	if err != nil {
+		return "", false
+	}
+	st, err := b.Status()
+	if (err != nil && !errors.Is(err, refresher.ErrLastRun)) || !st.Installed {
+		return "", false
+	}
+	if br, isBR := b.(refresher.BinReporter); isBR {
+		bin, _ = br.InstalledBin()
+	}
+	return bin, true
 }
 
 // Done means the entry is installed and the receipt records consent.
@@ -102,8 +125,12 @@ func (s *backgroundStep) Undo(e *Env, r *Receipt) error {
 	if err != nil {
 		return err
 	}
+	_, was := s.installed(e)
 	if err := b.Uninstall(); err != nil {
 		return err
+	}
+	if was {
+		fmt.Fprintf(e.Out, "Removed the background refresh job (%s)\n", BackendName(e.GOOS))
 	}
 	r.Background = nil
 	return nil

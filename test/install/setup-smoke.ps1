@@ -19,7 +19,7 @@ foreach ($exe in 'oci-assume.exe', 'oci-assume-bg.exe') {
 $archive = "oci-assume_9.9.9_windows_$arch.zip"
 Compress-Archive -Path (Join-Path $pkg '*') -DestinationPath (Join-Path $rel $archive)
 $h = (Get-FileHash -Algorithm SHA256 (Join-Path $rel $archive)).Hash.ToLower()
-Set-Content -Path (Join-Path $rel 'checksums.txt') -Value "$h  $archive"
+[IO.File]::WriteAllText((Join-Path $rel 'checksums.txt'), "$h  $archive`n", (New-Object Text.UTF8Encoding $false))
 
 # The irm | iex path: the script text runs in this session, configured by env.
 $env:OCI_ASSUME_BASE_URL = (New-Object Uri $rel).AbsoluteUri
@@ -40,7 +40,8 @@ foreach ($ps in 'pwsh', 'powershell') {
     }
 }
 function Test-Block($p) { (Test-Path $p) -and ((Get-Content -Raw $p) -match '# >>> oci-assume >>>') }
-function Get-TaskXml { $x = schtasks /Query /TN oci-assume-refresh /XML 2>$null | Out-String; if ($LASTEXITCODE -eq 0) { $x } else { $null } }
+# A missing task is an expected failure: reset $LASTEXITCODE so it cannot fail the step.
+function Get-TaskXml { $x = schtasks /Query /TN oci-assume-refresh /XML 2>$null | Out-String; $ok = $LASTEXITCODE -eq 0; $global:LASTEXITCODE = 0; if ($ok) { $x } else { $null } }
 
 oci-assume setup --yes --no-oci-cli --no-login
 if ($LASTEXITCODE -ne 0) { Fail "setup exit $LASTEXITCODE" }
@@ -58,3 +59,4 @@ foreach ($p in $profiles) { if (Test-Block $p) { Fail "block left in $p" } }
 if (Get-TaskXml) { Fail 'task still registered' }
 Pass 'uninstall removed the profile blocks and the task'
 # The helper exe belongs to the install, not setup; uninstall only prints how to remove binaries.
+exit 0

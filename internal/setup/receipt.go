@@ -1,13 +1,17 @@
 package setup
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"time"
+
+	"github.com/123yogin/oci-assume/internal/lock"
 )
 
 // receiptVersion is the receipt schema version.
@@ -85,11 +89,65 @@ func SaveReceipt(stateDir string, r Receipt) error {
 	return nil
 }
 
-// removeReceipt deletes the receipt; a missing one is fine.
-func removeReceipt(stateDir string) error {
+// removeReceipt deletes the receipt and reports whether one existed.
+func removeReceipt(stateDir string) (bool, error) {
 	err := os.Remove(filepath.Join(stateDir, receiptFile))
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return false, nil
 	}
+	return err == nil, err
+}
+
+// receiptLock names the receipt's lock, like the state lock; no shell-safe profile name can equal it.
+const receiptLock = "\x00receipt"
+
+// receiptLockWait bounds waiting for another process's receipt write; a var so tests can shorten it.
+var receiptLockWait = 5 * time.Second
+
+// LockReceipt takes the cross-process receipt lock in <stateDir>/locks; it returns lock.ErrTimeout when busy.
+func LockReceipt(ctx context.Context, stateDir string) (func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, receiptLockWait)
+	defer cancel()
+	return lock.AcquireIn(ctx, filepath.Join(stateDir, "locks"), receiptLock)
+}
+
+// UpdateReceipt runs a receipt read-modify-write under the receipt lock; fn returns whether to save.
+func UpdateReceipt(ctx context.Context, stateDir string, fn func(*Receipt) bool) error {
+	_, err := updateReceipt(ctx, stateDir, fn)
 	return err
+}
+
+func updateReceipt(ctx context.Context, stateDir string, fn func(*Receipt) bool) (Receipt, error) {
+	release, err := LockReceipt(ctx, stateDir)
+	if err != nil {
+		return Receipt{}, fmt.Errorf("lock receipt: %w", err)
+	}
+	defer release()
+	r, err := LoadReceipt(stateDir)
+	if err != nil {
+		return r, err
+	}
+	if !fn(&r) {
+		return r, nil
+	}
+	return r, SaveReceipt(stateDir, r)
+}
+
+// mergeStep copies what one Apply changed (before → after) onto cur, keeping other writers' fields.
+func mergeStep(cur *Receipt, before, after Receipt) {
+	for _, f := range after.Files {
+		if !hasFileIn(before.Files, f.Path) && !hasFileIn(cur.Files, f.Path) {
+			cur.Files = append(cur.Files, f)
+		}
+	}
+	if !reflect.DeepEqual(before.Background, after.Background) {
+		cur.Background = after.Background
+	}
+	if before.OCICLI != after.OCICLI {
+		cur.OCICLI = after.OCICLI
+	}
+	cur.Version = receiptVersion
 }

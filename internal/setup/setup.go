@@ -22,6 +22,7 @@ type Env struct {
 	Exec                        func(ctx context.Context, name string, args ...string) (string, error) // combined out
 	ExecTTY                     func(ctx context.Context, name string, args ...string) error           // stdio to terminal
 	LookPath                    func(string) (string, error)
+	Executable                  func() (string, error) // the running binary; nil skips the PATH line
 	Getenv                      func(string) string
 	Now                         func() time.Time
 	Ctx                         context.Context // steps use e.Context() for Exec/ExecTTY
@@ -132,12 +133,14 @@ func Run(e *Env, steps []Step, o Options) (applied []string, err error) {
 				continue
 			}
 		}
+		before := cloneReceipt(r)
 		aerr := s.Apply(e, &r)
-		r.Version = receiptVersion
 		// Save even on failure: a partial Apply may have recorded what it changed.
-		if err := SaveReceipt(e.StateDir, r); err != nil {
+		saved, err := updateReceipt(e.Context(), e.StateDir, func(cur *Receipt) bool { mergeStep(cur, before, r); return true })
+		if err != nil {
 			return applied, errors.Join(aerr, fmt.Errorf("%s: save receipt: %w", id, err))
 		}
+		r = saved
 		if errors.Is(aerr, ErrSkipped) {
 			fmt.Fprintf(e.Out, "– %s %v\n", id, aerr)
 			unapplied = true
@@ -157,13 +160,43 @@ func Run(e *Env, steps []Step, o Options) (applied []string, err error) {
 	}
 	if len(applied) == 0 && (len(declined) > 0 || unapplied) {
 		fmt.Fprintln(e.Out, "Nothing changed.")
-		return applied, nil
+	} else {
+		if len(declined) > 0 {
+			fmt.Fprintf(e.Out, "Declined: %s\n", strings.Join(declined, ", "))
+		}
+		fmt.Fprintln(e.Out, doneLine)
 	}
-	if len(declined) > 0 {
-		fmt.Fprintf(e.Out, "Declined: %s\n", strings.Join(declined, ", "))
+	if dir := pathWarning(e, steps, o); dir != "" {
+		fmt.Fprintf(e.Out, "oci-assume is not on PATH in new shells: add %s to PATH\n", dir)
 	}
-	fmt.Fprintln(e.Out, doneLine)
 	return applied, nil
+}
+
+// pathWarning returns the binary's dir when new shells will not find it and no done hook step adds it.
+func pathWarning(e *Env, steps []Step, o Options) string {
+	dir, needed := BinDir(e)
+	if !needed {
+		return ""
+	}
+	for _, s := range steps {
+		if s.ID() == "shell-hook" && !o.Skip[s.ID()] {
+			if done, err := s.Done(e); done && err == nil {
+				return ""
+			}
+		}
+	}
+	return dir
+}
+
+// cloneReceipt copies r deeply enough for mergeStep to diff against.
+func cloneReceipt(r Receipt) Receipt {
+	c := r
+	c.Files = append([]FileEntry(nil), r.Files...)
+	if r.Background != nil {
+		b := *r.Background
+		c.Background = &b
+	}
+	return c
 }
 
 // receiptHint points a corrupt receipt at uninstall, which resets it.
@@ -191,14 +224,19 @@ func confirm(e *Env) (bool, error) {
 	return false, nil
 }
 
-// Uninstall runs Undo in reverse order, then deletes the receipt; purge also removes the state dir and macOS log.
-// If any Undo fails, the updated receipt is kept so a re-run can retry.
+// Uninstall runs Undo in reverse order under the receipt lock, then deletes the receipt; purge also
+// removes the state dir and macOS log. Each change is reported; a failed Undo keeps the receipt for a retry.
 func Uninstall(e *Env, steps []Step, purge bool) error {
 	if purge {
 		if err := safeToPurge(e.StateDir, e.Home); err != nil {
 			return err
 		}
 	}
+	release, err := LockReceipt(e.Context(), e.StateDir)
+	if err != nil {
+		return fmt.Errorf("lock receipt (is another oci-assume setup running?): %w", err)
+	}
+	defer release()
 	r, err := LoadReceipt(e.StateDir)
 	if errors.Is(err, errCorruptReceipt) {
 		fmt.Fprintf(e.Out, "warning: %v; undoing every step without it\n", err)
@@ -215,18 +253,25 @@ func Uninstall(e *Env, steps []Step, purge bool) error {
 	if len(errs) > 0 {
 		return errors.Join(append(errs, SaveReceipt(e.StateDir, r))...)
 	}
-	if err := removeReceipt(e.StateDir); err != nil {
+	if ok, err := removeReceipt(e.StateDir); err != nil {
 		return err
+	} else if ok {
+		fmt.Fprintf(e.Out, "Removed the setup receipt %s\n", filepath.Join(e.StateDir, receiptFile))
 	}
 	if !purge {
 		return nil
 	}
+	release() // the lock file lives in the state dir, which Windows cannot delete while it is locked
 	if err := os.RemoveAll(e.StateDir); err != nil {
 		return err
 	}
+	fmt.Fprintf(e.Out, "Removed the state directory %s\n", e.StateDir)
 	if e.GOOS == "darwin" {
-		err := os.Remove(filepath.Join(e.Home, "Library", "Logs", "oci-assume.log"))
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		log := filepath.Join(e.Home, "Library", "Logs", "oci-assume.log")
+		err := os.Remove(log)
+		if err == nil {
+			fmt.Fprintf(e.Out, "Removed %s\n", log)
+		} else if !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 	}

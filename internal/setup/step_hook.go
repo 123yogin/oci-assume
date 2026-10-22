@@ -130,8 +130,12 @@ func (s hookStep) Apply(e *Env, r *Receipt) error {
 // Undo removes the receipt's blocks and drop-ins, plus any marked block in the known files (v1.0 or lost receipt).
 func (hookStep) Undo(e *Env, r *Receipt) error {
 	files := append([]FileEntry(nil), r.Files...)
+	var pwshTargets []Target
 	for _, sh := range []string{"zsh", "bash", "fish", "pwsh"} {
 		ts, _ := HookTargets(e, sh)
+		if sh == "pwsh" {
+			pwshTargets = ts
+		}
 		if sh == "bash" {
 			ts = append(ts, Target{Path: filepath.Join(e.Home, ".bash_profile"), Kind: "block"},
 				Target{Path: filepath.Join(e.Home, ".bash_login"), Kind: "block"})
@@ -145,7 +149,11 @@ func (hookStep) Undo(e *Env, r *Receipt) error {
 	var errs []error
 	var kept []FileEntry
 	for _, f := range files {
-		if err := undoFile(f); err != nil {
+		did, err := undoFile(e, f)
+		if did != "" {
+			fmt.Fprintln(e.Out, did)
+		}
+		if err != nil {
 			errs = append(errs, err)
 			if hasFile(r, f.Path) {
 				kept = append(kept, f)
@@ -153,7 +161,24 @@ func (hookStep) Undo(e *Env, r *Receipt) error {
 		}
 	}
 	r.Files = kept
+	reportLegacy(e, pwshTargets)
 	return errors.Join(errs...)
+}
+
+// reportLegacy lists unmarked hook lines uninstall leaves in place, since it only removes marked blocks.
+func reportLegacy(e *Env, pwshTargets []Target) {
+	var seen []string
+	for _, sh := range []string{"zsh", "bash", "fish", "pwsh"} {
+		for _, p := range legacyFiles(e, sh, pwshTargets) {
+			if contains(seen, p) {
+				continue
+			}
+			seen = append(seen, p)
+			for _, n := range legacyLines(p) {
+				fmt.Fprintf(e.Out, "Left an unmarked `oci-assume init` line at %s:%d; remove it by hand if you no longer want it\n", tilde(e, p), n)
+			}
+		}
+	}
 }
 
 func hasFile(r *Receipt, p string) bool { return hasFileIn(r.Files, p) }

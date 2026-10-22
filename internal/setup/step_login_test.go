@@ -141,7 +141,7 @@ func TestLoginStepCallsAuthenticate(t *testing.T) {
 	if err := s.Apply(e, &Receipt{}); !errors.Is(err, ErrSkipped) {
 		t.Fatalf("no oci: %v", err)
 	}
-	if r := s.SkipReason(e); !strings.Contains(r, "open a new terminal, then run oci-assume setup") {
+	if r := s.SkipReason(e); !strings.Contains(r, "OCI CLI is not installed") {
 		t.Fatalf("skip reason %q", r)
 	}
 	if err := s.Undo(e, &Receipt{}); err != nil {
@@ -160,5 +160,20 @@ func TestLoginFlowCtrlCAtPrompt(t *testing.T) {
 	_, err := LoginFlow(ctx, e, filepath.Join(t.TempDir(), "config"), func(context.Context, string, string) error { called = true; return nil })
 	if !errors.Is(err, context.Canceled) || called {
 		t.Fatalf("err %v called %v", err, called)
+	}
+}
+
+func TestLoginSkipReasonDistinguishesMissingFromNotOnPath(t *testing.T) {
+	e, _ := testEnv(t, "", true)
+	s := &loginStep{configPath: func() string { return filepath.Join(t.TempDir(), "config") },
+		newRunner: func() (ocicli.Runner, error) { return nil, ocicli.ErrNotInstalled }}
+	if r := s.SkipReason(e); !strings.Contains(r, "OCI CLI is not installed") {
+		t.Fatalf("missing CLI reason %q", r)
+	}
+	if err := SaveReceipt(e.StateDir, Receipt{Version: "1", OCICLI: "brew"}); err != nil {
+		t.Fatal(err)
+	}
+	if r := s.SkipReason(e); !strings.Contains(r, "installed but not on PATH yet") {
+		t.Fatalf("just-installed reason %q", r)
 	}
 }

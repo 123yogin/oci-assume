@@ -1,0 +1,6 @@
+export FOO=1
+
+# >>> oci-assume >>>
+export PATH="$HOME/.local/bin:$PATH"
+command -v oci-assume >/dev/null && eval "$(oci-assume init zsh)"
+# <<< oci-assume <<<

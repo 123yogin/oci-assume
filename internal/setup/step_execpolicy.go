@@ -200,7 +200,7 @@ func (execPolicyStep) Apply(e *Env, _ *Receipt) error {
 	return nil
 }
 
-// Undo restores each CurrentUser policy recorded by Apply; without a record it changes nothing.
+// Undo prints the command restoring each CurrentUser policy Apply recorded, then forgets it; it changes no policy.
 func (execPolicyStep) Undo(e *Env, _ *Receipt) error {
 	prev, err := loadPrev(e)
 	if err != nil || len(prev) == 0 {
@@ -212,16 +212,13 @@ func (execPolicyStep) Undo(e *Env, _ *Receipt) error {
 	}
 	sort.Strings(hosts)
 	for _, h := range hosts {
-		if e.LookPath != nil {
-			if _, err := e.LookPath(h); err != nil {
-				continue // that edition was uninstalled; nothing to restore
-			}
-		}
-		if _, err := runPS(e, h, "Set-ExecutionPolicy "+prev[h]+" -Scope CurrentUser -Force"); err != nil {
-			return err
-		}
+		fmt.Fprintf(e.Out, "To restore your previous PowerShell execution policy run: Set-ExecutionPolicy %s -Scope CurrentUser (in %s)\n", prev[h], h)
 	}
-	return os.Remove(filepath.Join(e.StateDir, policyPrevFile))
+	err = os.Remove(filepath.Join(e.StateDir, policyPrevFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 // loadPrev reads the recorded policies; values are checked before they go back into a command line.
