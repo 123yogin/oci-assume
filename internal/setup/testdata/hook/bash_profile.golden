@@ -1,0 +1,3 @@
+# >>> oci-assume >>>
+[ -f ~/.bashrc ] && . ~/.bashrc
+# <<< oci-assume <<<
