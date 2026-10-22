@@ -593,7 +593,7 @@ func undoFile(f FileEntry) error {
 		}
 		return os.Remove(f.Path + bakSuffix)
 	}
-	return writeRC(f.Path, real, s, next, mode, true)
+	return atomicWrite(real, next, mode)
 }
 
 // removeOrEmpty deletes p, but never through a symlink: a linked target is emptied instead.

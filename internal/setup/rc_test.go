@@ -642,3 +642,34 @@ func TestRelativeZDOTDIRFallsBack(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestUndoNeverWritesBackup(t *testing.T) {
+	e, _ := hookEnv(t, "linux", nil, nil)
+	e.Shell = "zsh"
+	rc := filepath.Join(e.Home, ".zshrc")
+	write(t, rc, "a\n")
+	r := apply(t, e)
+	if err := os.Remove(rc + bakSuffix); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewHookStep().Undo(e, r); err != nil || read(t, rc) != "a\n" {
+		t.Fatalf("undo %v %q", err, read(t, rc))
+	}
+	if _, err := os.Stat(rc + bakSuffix); !os.IsNotExist(err) {
+		t.Fatalf("undo wrote a backup: %v", err)
+	}
+}
+
+func TestUndoCreatedThenEditedNoBackup(t *testing.T) {
+	e, _ := hookEnv(t, "linux", nil, nil)
+	e.Shell = "zsh"
+	rc := filepath.Join(e.Home, ".zshrc")
+	r := apply(t, e)
+	write(t, rc, read(t, rc)+"mine\n")
+	if err := NewHookStep().Undo(e, r); err != nil || read(t, rc) != "mine\n" {
+		t.Fatalf("undo %v %q", err, read(t, rc))
+	}
+	if _, err := os.Stat(rc + bakSuffix); !os.IsNotExist(err) {
+		t.Fatalf("stray backup: %v", err)
+	}
+}
