@@ -16,74 +16,62 @@ dev           us-ashburn-1  52m      ● active
 
 ## Install
 
-You need the [OCI CLI](https://docs.oracle.com/en-us/iaas/Content/API/SDKDocs/cliinstall.htm) first (`brew install oci-cli` on macOS).
+One command per OS. It installs `oci-assume`, then runs `oci-assume setup`, which offers each step and asks before changing anything:
 
-### macOS
+- installs the OCI CLI if it is missing;
+- adds the shell hook to your shell's startup file;
+- turns on background refresh;
+- creates your first session profile through the browser.
 
-```sh
-brew install --cask 123yogin/tap/oci-assume
-```
-
-or, without Homebrew:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/123yogin/oci-assume/main/install.sh | sh
-```
-
-### Linux
+**macOS / Linux**
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/123yogin/oci-assume/main/install.sh | sh
 ```
 
-Or grab the `.deb` / `.rpm` from the [latest release](https://github.com/123yogin/oci-assume/releases/latest), or `go install github.com/123yogin/oci-assume/cmd/oci-assume@latest`.
-
-### Windows (PowerShell)
-
-Downloads the latest release, verifies its SHA-256 checksum and adds it to your user `PATH` (no admin needed):
+**Windows (PowerShell, no admin needed)**
 
 ```powershell
-$v = (Invoke-RestMethod https://api.github.com/repos/123yogin/oci-assume/releases/latest).tag_name.TrimStart("v")
-$arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "amd64" }
-$name = "oci-assume_${v}_windows_${arch}.zip"; $base = "https://github.com/123yogin/oci-assume/releases/download/v$v"
-$dir = "$env:LOCALAPPDATA\Programs\oci-assume"
-Invoke-WebRequest "$base/$name" -OutFile "$env:TEMP\$name"; Invoke-WebRequest "$base/checksums.txt" -OutFile "$env:TEMP\oci-assume-sums.txt"
-$want = ((Get-Content "$env:TEMP\oci-assume-sums.txt") | Where-Object { $_ -match ("  " + [regex]::Escape($name) + "$") }).Split(" ")[0]
-if ($want -ne (Get-FileHash "$env:TEMP\$name" -Algorithm SHA256).Hash.ToLower()) { throw "Checksum mismatch - not installing" }
-Expand-Archive "$env:TEMP\$name" -DestinationPath $dir -Force
-$p = [Environment]::GetEnvironmentVariable("Path", "User"); if ($p -notlike "*$dir*") { [Environment]::SetEnvironmentVariable("Path", "$p;$dir", "User") }; $env:Path += ";$dir"
-oci-assume version
+irm https://raw.githubusercontent.com/123yogin/oci-assume/main/install.ps1 | iex
 ```
 
-A one-line `irm … | iex` installer and Scoop support are coming in the next release.
+**Package managers**: install, then run `oci-assume setup`.
 
-## Get started
-
-**1. Add the shell hook** (one time). Pick your shell:
-
-| Shell | Run this once |
+| Tool | Install |
 |---|---|
-| zsh | `echo 'eval "$(oci-assume init zsh)"' >> ~/.zshrc && source ~/.zshrc` |
-| bash | `echo 'eval "$(oci-assume init bash)"' >> ~/.bashrc && source ~/.bashrc` |
-| fish | `echo 'oci-assume init fish \| source' >> ~/.config/fish/config.fish` |
-| PowerShell | `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser; Add-Content $PROFILE 'oci-assume init pwsh \| Out-String \| Invoke-Expression'; . $PROFILE` |
+| Homebrew (macOS) | `brew install --cask 123yogin/tap/oci-assume` |
+| Scoop (Windows) | `scoop bucket add 123yogin https://github.com/123yogin/scoop-bucket; scoop install oci-assume` |
+| deb / rpm | download from the [latest release](https://github.com/123yogin/oci-assume/releases/latest), then `sudo apt install ./oci-assume_*.deb` or `sudo dnf install ./oci-assume-*.rpm` |
+| Go | `go install github.com/123yogin/oci-assume/cmd/oci-assume@latest` |
 
-The hook is a small shell function: a program can't change your shell's environment on its own, so this is what lets `oci-assume` set `OCI_CLI_PROFILE` for you.
+Then open a new terminal and run `oci-assume`. Re-running `oci-assume setup` is safe: finished steps show `✓ already set up`. Check everything with `oci-assume doctor`.
 
-**2. Log in once** (skip if you already have a session profile):
+`setup --dry-run` prints the plan without changing anything. Without a terminal (or with `CI` set) it needs `--yes`, and then applies only the shell hook and background refresh. `--no-shell`, `--no-background`, `--no-oci-cli`, `--no-login` and `--shell zsh|bash|fish|pwsh` narrow it.
 
-```sh
-oci session authenticate --profile-name dev --region us-ashburn-1
-```
-
-**3. Use it:**
+## Use it
 
 ```sh
 oci-assume                    # pick a profile from the list (or: oci-assume dev)
-oci-assume daemon install     # keep sessions refreshed in the background
+oci iam region list           # no --profile, no --auth
 ```
 
-That's it. Sessions stay fresh in the background; you only log in through the browser again after Oracle's 24-hour limit. Check everything with `oci-assume doctor`.
+Sessions stay fresh in the background; you only log in through the browser again after Oracle's 24-hour limit.
+
+## Advanced / manual setup
+
+`setup` only automates these steps. To do them by hand instead:
+
+1. **Shell hook.** Add one line to your startup file. A program can't change your shell's environment on its own, so this small function is what lets `oci-assume` set `OCI_CLI_PROFILE` for you.
+
+   | Shell | Line | File |
+   |---|---|---|
+   | zsh | `eval "$(oci-assume init zsh)"` | `~/.zshrc` |
+   | bash | `eval "$(oci-assume init bash)"` | `~/.bashrc` |
+   | fish | `oci-assume init fish \| source` | `~/.config/fish/config.fish` |
+   | PowerShell | `oci-assume init pwsh \| Out-String \| Invoke-Expression` | `$PROFILE.CurrentUserAllHosts` (run `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` first if scripts are blocked) |
+
+2. **Log in once:** `oci session authenticate --profile-name dev --region us-ashburn-1`.
+3. **Background refresh:** `oci-assume daemon install` (and `daemon uninstall` / `daemon status`).
 
 ## Commands
 
@@ -98,9 +86,11 @@ That's it. Sessions stay fresh in the background; you only log in through the br
 | `oci-assume refresh --all [--background]` | Refresh every profile assumed in the last 24 hours. `--background` never opens a browser; it sends a notification instead. |
 | `oci-assume login <profile>` | Force a browser login (`oci session authenticate`). |
 | `oci-assume prompt [--json]` | Print the active profile and time left, for shell prompts. |
-| `oci-assume daemon install\|uninstall\|status` | Manage the background refresh job (every 30 minutes). |
+| `oci-assume setup [--yes] [--dry-run]` | Install the OCI CLI, shell hook and background refresh, then log in. Asks before each step. |
+| `oci-assume uninstall [--purge]` | Undo everything `setup` changed. `--purge` also deletes the state directory and log. |
+| `oci-assume daemon install\|uninstall\|status` | Manage the background refresh job by hand (every 30 minutes). |
 | `oci-assume init zsh\|bash\|fish\|pwsh` | Print the shell hook. |
-| `oci-assume doctor` | Check the `oci` CLI, config, file permissions, shell hook and daemon. |
+| `oci-assume doctor` | Check the `oci` CLI, config, file permissions, shell hook, setup receipt, background job and (Windows) execution policy. |
 | `oci-assume version` | Print the version. |
 | `oci-assume completion <shell>` | Generate shell completions. |
 
@@ -108,21 +98,20 @@ Flags available on every command: `--threshold <duration>` (refresh when less th
 
 ## Uninstall
 
-1. Remove the background job: `oci-assume daemon uninstall`.
-2. Delete the `oci-assume init ...` line from your shell startup file.
-3. Delete the state directory (or `$OCI_ASSUME_STATE_DIR` if you set it):
-   - macOS: `~/Library/Application Support/oci-assume`
-   - Linux: `~/.config/oci-assume` (or `$XDG_CONFIG_HOME/oci-assume`)
-   - Windows: `%AppData%\oci-assume`
-4. macOS only: delete the log file `~/Library/Logs/oci-assume.log`.
-5. Remove the binary with the tool you installed it with:
-   - Homebrew: `brew uninstall --cask oci-assume`
-   - Windows (PowerShell install): delete `%LOCALAPPDATA%\Programs\oci-assume` and remove it from your user PATH
-   - deb/rpm: `sudo apt remove oci-assume` or `sudo dnf remove oci-assume`
-   - curl: `rm ~/.local/bin/oci-assume` (or the file in `$OCI_ASSUME_INSTALL_DIR`)
-   - Go: `rm "$(go env GOPATH)/bin/oci-assume"`
+```sh
+oci-assume uninstall           # add --purge to also delete the state directory and log
+```
 
-Your `~/.oci` config, keys and tokens are left untouched.
+It removes the shell hook blocks, the background job and the setup receipt, and is safe to run twice. Then remove the binary with the tool you installed it with (`uninstall` prints the commands):
+
+- Homebrew: `brew uninstall --cask oci-assume`
+- Scoop: `scoop uninstall oci-assume`
+- Windows (`install.ps1`): delete `%LOCALAPPDATA%\Programs\oci-assume` and remove it from your user PATH
+- deb/rpm: `sudo apt remove oci-assume` or `sudo dnf remove oci-assume`
+- curl: `rm ~/.local/bin/oci-assume` (or the file in `$OCI_ASSUME_INSTALL_DIR`)
+- Go: `rm "$(go env GOPATH)/bin/oci-assume"`
+
+If `setup` installed the OCI CLI, `uninstall` prints its removal command too, but never runs it. Your `~/.oci` config, keys and tokens are left untouched.
 
 ## Prompt
 

@@ -159,3 +159,22 @@ func TestSetupEnvCarriesCommandContext(t *testing.T) {
 		t.Fatalf("Env.Ctx is not the command context: %v", got)
 	}
 }
+
+func TestSetupCtrlCAtPromptExits1(t *testing.T) {
+	e := setup(t, "ok")
+	t.Setenv("CI", "")
+	e.tty = true
+	var log []string
+	d := e.deps()
+	d.setupSteps = func(*onboard.Env) []onboard.Step {
+		return []onboard.Step{&cliStep{id: "shell-hook", log: &log}, &cliStep{id: "background", log: &log}}
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if code := run(ctx, d, []string{"setup"}); code != 1 || len(log) != 0 {
+		t.Fatalf("exit %d log %v", code, log)
+	}
+	if !strings.Contains(e.stderr.String(), "cancelled") {
+		t.Fatalf("stderr %q", e.stderr.String())
+	}
+}

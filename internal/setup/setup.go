@@ -2,7 +2,6 @@
 package setup
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -85,11 +84,6 @@ func Run(e *Env, steps []Step, o Options) (applied []string, err error) {
 		r = Receipt{}
 	}
 	planOnly := o.DryRun || (!e.Interactive && !o.Yes)
-	var in io.Reader = strings.NewReader("")
-	if e.In != nil {
-		in = e.In
-	}
-	br := bufio.NewReader(in)
 	var declined []string
 	pending, unapplied := false, false
 	for _, s := range steps {
@@ -127,7 +121,12 @@ func Run(e *Env, steps []Step, o Options) (applied []string, err error) {
 			}
 		} else {
 			fmt.Fprintf(e.Out, "%s [Y/n] ", desc)
-			if !confirm(br) {
+			yes, err := confirm(e)
+			if err != nil {
+				fmt.Fprintln(e.Out)
+				return applied, err
+			}
+			if !yes {
 				fmt.Fprintf(e.Out, "– %s skipped\n", id)
 				declined = append(declined, id)
 				continue
@@ -175,17 +174,21 @@ func receiptHint(err error) error {
 	return err
 }
 
-// confirm reads a [Y/n] answer; Enter means yes, EOF means no.
-func confirm(br *bufio.Reader) bool {
-	line, err := br.ReadString('\n')
+// confirm reads a [Y/n] answer; Enter means yes, EOF means no, and a cancelled ctx (Ctrl-C) returns its error.
+func confirm(e *Env) (bool, error) {
+	ctx := e.Context()
+	line, err := ReadLine(ctx, e.In)
+	if cerr := ctx.Err(); cerr != nil {
+		return false, cerr
+	}
 	if err != nil && line == "" {
-		return false
+		return false, nil
 	}
 	switch strings.ToLower(strings.TrimSpace(line)) {
 	case "", "y", "yes":
-		return true
+		return true, nil
 	}
-	return false
+	return false, nil
 }
 
 // Uninstall runs Undo in reverse order, then deletes the receipt; purge also removes the state dir and macOS log.

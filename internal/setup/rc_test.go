@@ -402,7 +402,7 @@ func TestUnknownShellPrintsAllAndSkips(t *testing.T) {
 		}
 	}
 	r := &Receipt{}
-	if err := s.Apply(e, r); !errors.Is(err, errNoShell) {
+	if err := s.Apply(e, r); !errors.Is(err, ErrSkipped) {
 		t.Fatalf("apply err %v", err)
 	}
 	ents, _ := os.ReadDir(e.Home)
@@ -537,7 +537,7 @@ func TestNoPowerShellSkips(t *testing.T) {
 	if done, err := NewHookStep().Done(e); err != nil || done {
 		t.Fatalf("done %v %v", done, err)
 	}
-	if err := NewHookStep().Apply(e, &Receipt{}); !errors.Is(err, errNoShell) {
+	if err := NewHookStep().Apply(e, &Receipt{}); !errors.Is(err, ErrSkipped) {
 		t.Fatalf("apply %v", err)
 	}
 }

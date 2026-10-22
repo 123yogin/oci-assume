@@ -17,6 +17,7 @@ import (
 	"github.com/123yogin/oci-assume/internal/ocicli"
 	"github.com/123yogin/oci-assume/internal/picker"
 	"github.com/123yogin/oci-assume/internal/refresher"
+	onboard "github.com/123yogin/oci-assume/internal/setup"
 	"github.com/123yogin/oci-assume/internal/shell"
 	"github.com/123yogin/oci-assume/internal/state"
 	"github.com/123yogin/oci-assume/internal/testutil/fakeoci"
@@ -112,6 +113,7 @@ func (e *env) deps() *deps {
 	}
 	d.binPath = func() (string, error) { return "/opt/oci-assume/bin/oci-assume", nil }
 	d.ociVersion = e.ociVersion
+	d.execPolicy = func(*onboard.Env) (bool, string, error) { return true, "", nil }
 	inner := d.newRunner
 	d.newRunner = func() (ocicli.Runner, error) { e.runners++; return inner() }
 	return d

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Runs in the container: builds fixtures, then execs the shell's case script.
+# Runs in the container: builds fixtures, runs the shell's case script, then the setup/uninstall case.
 set -eu
 T=$(mktemp -d)
 mkdir -p "$T/state"
@@ -32,9 +32,12 @@ export OCI_CLI_CONFIG_FILE="$T/config" OCI_ASSUME_STATE_DIR="$T/state" \
   OCI_ASSUME_OCI_BIN="$T/oci" TESTDIR="$T" HOME="$T"
 unset OCI_CLI_PROFILE OCI_CLI_AUTH OCI_CLI_REGION
 cd /src/test/shells
+rc=0
 case "$SHELLNAME" in
-  zsh) exec zsh -f ./cases.zsh ;;
-  bash) exec bash --noprofile --norc ./cases.bash ;;
-  fish) exec fish --no-config ./cases.fish ;;
-  pwsh) exec pwsh -NoProfile -NonInteractive -File ./cases.ps1 ;;
+  zsh) zsh -f ./cases.zsh || rc=1 ;;
+  bash) bash --noprofile --norc ./cases.bash || rc=1 ;;
+  fish) fish --no-config ./cases.fish || rc=1 ;;
+  pwsh) pwsh -NoProfile -NonInteractive -File ./cases.ps1 || rc=1 ;;
 esac
+sh ./setup.sh "$SHELLNAME" || rc=1
+exit $rc

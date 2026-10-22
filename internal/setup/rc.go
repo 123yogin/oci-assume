@@ -27,7 +27,7 @@ const (
 // pwshPathQuery forces UTF-8 output so non-ASCII profile paths survive.
 const pwshPathQuery = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; $PROFILE.CurrentUserAllHosts" // #nosec G101 -- a PowerShell expression, not a credential
 
-// errNoShell marks a skipped hook step (no shell or no PowerShell); the merge maps it to ErrSkipped.
+// errNoShell marks a skipped hook step (no shell or no PowerShell); the hook step maps it to ErrSkipped.
 var errNoShell = errors.New("shell hook skipped")
 
 // ErrUnknownShell means no flag, parent process or $SHELL named a supported shell.

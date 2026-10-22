@@ -43,15 +43,7 @@ func (s hookStep) Describe(e *Env) string {
 		}
 	}
 	if errors.Is(err, errNoShell) {
-		reason := strings.TrimPrefix(err.Error(), errNoShell.Error()+": ")
-		fmt.Fprintf(&b, "Shell hook: skipped (%s); no file will be changed.\n", reason)
-		b.WriteString("  Add the line for your shell yourself, or re-run with --shell zsh|bash|fish|pwsh:\n")
-		for _, x := range []struct{ sh, file string }{
-			{"zsh", "~/.zshrc"}, {"bash", "~/.bashrc"},
-			{"fish", "~/.config/fish/conf.d/oci-assume.fish"}, {"pwsh", "$PROFILE.CurrentUserAllHosts"},
-		} {
-			fmt.Fprintf(&b, "    %-4s  %s:  %s\n", x.sh, x.file, hookLine(x.sh))
-		}
+		fmt.Fprintf(&b, "Shell hook: skipped: %s", skipText(err))
 		return b.String()
 	}
 	if err != nil {
@@ -77,6 +69,28 @@ func (s hookStep) Describe(e *Env) string {
 	return b.String()
 }
 
+// SkipReason skips without prompting when no shell or PowerShell resolves, listing the lines to add by hand.
+func (s hookStep) SkipReason(e *Env) string {
+	if _, _, _, err := s.plan(e); errors.Is(err, errNoShell) {
+		return skipText(err)
+	}
+	return ""
+}
+
+// skipText is the reason plus every shell's hook line, since no file will be changed.
+func skipText(err error) string {
+	var b strings.Builder
+	b.WriteString(strings.TrimPrefix(err.Error(), errNoShell.Error()+": "))
+	b.WriteString("; no file was changed.\n  Add the line for your shell yourself, or re-run with --shell zsh|bash|fish|pwsh:\n")
+	for _, x := range []struct{ sh, file string }{
+		{"zsh", "~/.zshrc"}, {"bash", "~/.bashrc"},
+		{"fish", "~/.config/fish/conf.d/oci-assume.fish"}, {"pwsh", "$PROFILE.CurrentUserAllHosts"},
+	} {
+		fmt.Fprintf(&b, "    %-4s  %s:  %s\n", x.sh, x.file, hookLine(x.sh))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 func (s hookStep) Done(e *Env) (bool, error) {
 	_, targets, legacy, err := s.plan(e)
 	if errors.Is(err, errNoShell) {
@@ -96,6 +110,9 @@ func (s hookStep) Done(e *Env) (bool, error) {
 
 func (s hookStep) Apply(e *Env, r *Receipt) error {
 	_, targets, legacy, err := s.plan(e)
+	if errors.Is(err, errNoShell) {
+		return fmt.Errorf("%w: %s", ErrSkipped, skipText(err))
+	}
 	if err != nil || legacy {
 		return err
 	}

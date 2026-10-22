@@ -57,8 +57,9 @@ type deps struct {
 	scheduler  func(goos string) (refresher.Backend, error)
 	binPath    func() (string, error)
 	ociVersion func(ctx context.Context) (string, error)
-	// setupSteps backs the setup and uninstall commands.
+	// setupSteps backs the setup and uninstall commands; execPolicy backs doctor's Windows check.
 	setupSteps func(e *onboard.Env) []onboard.Step
+	execPolicy func(e *onboard.Env) (ok bool, why string, err error)
 	// spawn starts this binary detached (prompt --tick); logPath is the background log.
 	spawn   func(args ...string) error
 	logPath func() (string, error)
@@ -79,6 +80,7 @@ func defaultDeps() *deps {
 		binPath:    refresher.BinPath,
 		ociVersion: ociVersion,
 		setupSteps: onboard.DefaultSteps,
+		execPolicy: onboard.ExecPolicyStatus,
 		spawn:      spawnDetached(defaultLogPath),
 		logPath:    defaultLogPath,
 	}
@@ -353,9 +355,9 @@ func (l *lazyRunner) Authenticate(ctx context.Context, p, region string) error {
 	return r.Authenticate(ctx, p, region)
 }
 
-// healExempt commands never self-heal: prompt paths, setup/daemon (they manage the job), and trivial output.
+// healExempt commands never self-heal: prompt paths, setup/daemon (they manage the job), doctor (it reports), trivial output.
 var healExempt = map[string]bool{"prompt": true, "init": true, "__complete": true, "setup": true,
-	"uninstall": true, "version": true, "help": true, "completion": true, "daemon": true}
+	"uninstall": true, "version": true, "help": true, "completion": true, "daemon": true, "doctor": true}
 
 // selfHeal reinstalls a consented background job when it is missing; errors go to the log only.
 func selfHeal(d *deps, cmd *cobra.Command) {
