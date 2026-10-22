@@ -13,12 +13,19 @@ func TestPickerNewProfileRow(t *testing.T) {
 	if last := m.items[len(m.items)-1]; !last.New {
 		t.Fatalf("new row not sorted last: %+v", m.items)
 	}
+	golden(t, "newprofile-unselected", m.View())
 	golden(t, "newprofile", send(m, key(keyUp)).View())
-	// Filtering keeps the row, and Enter on it asks for a new profile.
+	// A query matching no profile parks the cursor off the new row; Enter waits for ↓.
 	m = send(m, typed("zzz")...)
 	if len(m.matches) != 1 || !m.items[m.matches[0]].New {
 		t.Fatalf("matches %v", m.matches)
 	}
+	golden(t, "newprofile-nomatch", m.View())
+	if m.update(key(keyEnter)) {
+		t.Fatal("enter on a parked cursor finished the picker")
+	}
+	m = send(m, key(keyDown))
+	golden(t, "newprofile-nomatch-selected", m.View())
 	if !m.update(key(keyEnter)) || !m.newProfile || m.choice != "" {
 		t.Fatalf("enter: newProfile %v choice %q", m.newProfile, m.choice)
 	}

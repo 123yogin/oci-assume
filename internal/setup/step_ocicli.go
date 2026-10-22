@@ -2,6 +2,7 @@ package setup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -16,6 +17,8 @@ const (
 	ociMSIURL       = "https://github.com/oracle/oci-cli/releases/latest"
 	ociScriptCmd    = `bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)"`
 	wingetPackageID = "Oracle.OCI-CLI"
+	// wingetNoApplicableInstaller is APPINSTALLER_CLI_ERROR_NO_APPLICABLE_INSTALLER, e.g. no user-scope installer.
+	wingetNoApplicableInstaller = 0x8A150010
 )
 
 type ociCLIStep struct{}
@@ -26,11 +29,11 @@ func NewOCICLIStep() Step { return ociCLIStep{} }
 func (ociCLIStep) ID() string     { return "oci-cli" }
 func (ociCLIStep) NeedsTTY() bool { return true }
 
+// Done mirrors ocicli.New: a set OCI_ASSUME_OCI_BIN must exist and never falls back to PATH.
 func (ociCLIStep) Done(e *Env) (bool, error) {
 	if p := e.Getenv("OCI_ASSUME_OCI_BIN"); p != "" {
-		if _, err := os.Stat(p); err == nil { // #nosec G703 -- user-set oci binary path
-			return true, nil
-		}
+		_, err := os.Stat(p) // #nosec G703 -- user-set oci binary path
+		return err == nil, nil
 	}
 	_, err := e.LookPath("oci")
 	return err == nil, nil
@@ -72,13 +75,32 @@ func (ociCLIStep) Describe(e *Env) string {
 	case "brew":
 		return "OCI CLI not found → install with `brew install oci-cli`?"
 	case "winget":
-		return "OCI CLI not found → install with `winget " + strings.Join(wingetArgs(true), " ") + "`?"
+		return "OCI CLI not found → install with `winget " + strings.Join(wingetArgs(true), " ") +
+			"`? (if winget has no per-user installer, it retries without --scope user)"
 	}
 	return "OCI CLI not found → " + manualHint(e.GOOS)
 }
 
+// SkipReason skips without prompting when there is no installer to run.
+func (ociCLIStep) SkipReason(e *Env) string {
+	if installer(e) == "" {
+		return manualHint(e.GOOS)
+	}
+	return ""
+}
+
+// noApplicableInstaller matches winget's exit code, read as either signed or unsigned 32-bit.
+func noApplicableInstaller(err error) bool {
+	var ec interface{ ExitCode() int }
+	if !errors.As(err, &ec) {
+		return false
+	}
+	c := ec.ExitCode()
+	return uint32(c) == wingetNoApplicableInstaller // #nosec G115 -- exit codes are 32-bit
+}
+
 func (ociCLIStep) Apply(e *Env, r *Receipt) error {
-	ctx, cancel := context.WithTimeout(context.Background(), ociInstallTimeout)
+	ctx, cancel := context.WithTimeout(e.Context(), ociInstallTimeout)
 	defer cancel()
 	tool := installer(e)
 	switch tool {
@@ -87,11 +109,12 @@ func (ociCLIStep) Apply(e *Env, r *Receipt) error {
 			return fmt.Errorf("brew install oci-cli: %w", err)
 		}
 	case "winget":
-		// --scope user avoids UAC; some packages or winget versions reject it, so retry unscoped.
-		if err := e.ExecTTY(ctx, "winget", wingetArgs(true)...); err != nil {
-			if err := e.ExecTTY(ctx, "winget", wingetArgs(false)...); err != nil {
-				return fmt.Errorf("winget install %s: %w", wingetPackageID, err)
-			}
+		err := e.ExecTTY(ctx, "winget", wingetArgs(true)...)
+		if err != nil && ctx.Err() == nil && noApplicableInstaller(err) {
+			err = e.ExecTTY(ctx, "winget", wingetArgs(false)...)
+		}
+		if err != nil {
+			return fmt.Errorf("winget install %s: %w", wingetPackageID, err)
 		}
 	default:
 		return fmt.Errorf("%w: %s", ErrSkipped, manualHint(e.GOOS))

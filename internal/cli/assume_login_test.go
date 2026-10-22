@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bufio"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/123yogin/oci-assume/internal/ocicli"
 	"github.com/123yogin/oci-assume/internal/picker"
+	onboard "github.com/123yogin/oci-assume/internal/setup"
 )
 
 // loginRunner fakes oci: Authenticate appends a session profile to the config and writes a token.
@@ -81,7 +84,7 @@ func TestAssumeZeroProfilesOffersLogin(t *testing.T) {
 	if !strings.HasPrefix(e.stdout.String(), "export OCI_CLI_PROFILE='myprof'") {
 		t.Fatalf("stdout %q", e.stdout.String())
 	}
-	if se := e.stderr.String(); !strings.Contains(se, "no OCI session profiles found") || !strings.Contains(se, "profile name [DEFAULT]") {
+	if se := e.stderr.String(); !strings.Contains(se, "no OCI profiles found") || !strings.Contains(se, "profile name [DEFAULT]") {
 		t.Fatalf("stderr %q", se)
 	}
 
@@ -91,12 +94,12 @@ func TestAssumeZeroProfilesOffersLogin(t *testing.T) {
 		t.Fatalf("decline: exit %d authed %v", code, lr.authed)
 	}
 	e.tty = false
-	if code, lr = runLogin(t, e, cfg, "y\n\n\n", nil); code != 4 || len(lr.authed) != 0 || strings.Contains(e.stderr.String(), "create one now") {
+	if code, lr = runLogin(t, e, cfg, "y\n\n\n", nil); code != 4 || len(lr.authed) != 0 || strings.Contains(e.stderr.String(), "create a session profile now") {
 		t.Fatalf("no tty: exit %d authed %v stderr %q", code, lr.authed, e.stderr.String())
 	}
 }
 
-func TestAssumeAPIKeyOnlyDeclineShowsPicker(t *testing.T) {
+func TestAssumeAPIKeyOnlyGetsPickerWithoutPrompt(t *testing.T) {
 	e := setup(t, "ok")
 	e.tty = true
 	cfg := filepath.Join(t.TempDir(), "config")
@@ -105,9 +108,12 @@ func TestAssumeAPIKeyOnlyDeclineShowsPicker(t *testing.T) {
 	}
 	var picked []picker.Item
 	pick := func(items []picker.Item, _ *os.File) (string, error) { picked = items; return "k", nil }
-	code, lr := runLogin(t, e, cfg, "n\n", pick)
+	code, lr := runLogin(t, e, cfg, "", pick)
 	if code != 0 || len(lr.authed) != 0 || len(picked) != 2 || !picked[1].New {
 		t.Fatalf("exit %d authed %v picked %v stderr %q", code, lr.authed, picked, e.stderr.String())
+	}
+	if strings.Contains(e.stderr.String(), "[Y/n]") {
+		t.Fatalf("prompted: %q", e.stderr.String())
 	}
 }
 
@@ -123,5 +129,18 @@ func TestPickerNewProfileRunsLogin(t *testing.T) {
 	}
 	if !strings.HasPrefix(e.stdout.String(), "export OCI_CLI_PROFILE='newp'") {
 		t.Fatalf("stdout %q", e.stdout.String())
+	}
+}
+
+func TestSetupEnvSharesOneBufferedReader(t *testing.T) {
+	e := setup(t, "ok")
+	d := e.deps()
+	var in io.Reader
+	d.setupSteps = func(env *onboard.Env) []onboard.Step { in = env.In; return nil }
+	if code := run(t.Context(), d, []string{"setup", "--dry-run"}); code != 0 {
+		t.Fatalf("exit %d: %s", code, e.stderr.String())
+	}
+	if _, ok := in.(*bufio.Reader); !ok {
+		t.Fatalf("Env.In is %T, want *bufio.Reader", in)
 	}
 }

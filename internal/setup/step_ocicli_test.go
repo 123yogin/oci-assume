@@ -11,7 +11,7 @@ import (
 )
 
 // fakeTools makes LookPath find only the named tools and records ExecTTY calls.
-func fakeTools(e *Env, calls *[]string, fail func(cmd string) bool, tools ...string) {
+func fakeTools(e *Env, calls *[]string, fail func(cmd string) error, tools ...string) {
 	e.LookPath = func(name string) (string, error) {
 		for _, t := range tools {
 			if t == name {
@@ -23,8 +23,8 @@ func fakeTools(e *Env, calls *[]string, fail func(cmd string) bool, tools ...str
 	e.ExecTTY = func(_ context.Context, name string, args ...string) error {
 		cmd := strings.Join(append([]string{name}, args...), " ")
 		*calls = append(*calls, cmd)
-		if fail != nil && fail(cmd) {
-			return errors.New("exit status 1")
+		if fail != nil {
+			return fail(cmd)
 		}
 		return nil
 	}
@@ -78,13 +78,34 @@ func TestOCICLIStepDoneWhenFound(t *testing.T) {
 	if done, _ := NewOCICLIStep().Done(e); !done {
 		t.Fatal("OCI_ASSUME_OCI_BIN not honoured")
 	}
+	// A broken override is not done, even with oci on PATH (matches ocicli.New).
+	fakeTools(e, &calls, nil, "oci")
+	bin = filepath.Join(t.TempDir(), "missing")
+	if done, _ := NewOCICLIStep().Done(e); done {
+		t.Fatal("broken OCI_ASSUME_OCI_BIN counted as done")
+	}
 }
+
+// exitErr fakes an *exec.ExitError's exit code.
+type exitErr int
+
+func (c exitErr) Error() string { return "exit status" }
+func (c exitErr) ExitCode() int { return int(c) }
 
 func TestOCICLIStepWingetScopeFallback(t *testing.T) {
 	e, _ := testEnv(t, "", true)
 	e.GOOS = "windows"
 	var calls []string
-	fakeTools(e, &calls, func(cmd string) bool { return strings.Contains(cmd, "--scope") }, "winget")
+	noInstaller := func(cmd string) error {
+		if strings.Contains(cmd, "--scope") {
+			return exitErr(int(int32(-1978335216))) // 0x8A150010 as Windows reports it
+		}
+		return nil
+	}
+	fakeTools(e, &calls, noInstaller, "winget")
+	if d := NewOCICLIStep().Describe(e); !strings.Contains(d, "retries without --scope user") {
+		t.Fatalf("describe %q", d)
+	}
 	var r Receipt
 	if err := NewOCICLIStep().Apply(e, &r); err != nil {
 		t.Fatal(err)
@@ -95,6 +116,20 @@ func TestOCICLIStepWingetScopeFallback(t *testing.T) {
 	}
 	if !reflect.DeepEqual(calls, want) || r.OCICLI != "winget" {
 		t.Fatalf("calls %v receipt %q", calls, r.OCICLI)
+	}
+	// Any other failure, or a cancelled run, is not retried.
+	calls = nil
+	fakeTools(e, &calls, func(string) error { return exitErr(1) }, "winget")
+	if err := NewOCICLIStep().Apply(e, &Receipt{}); err == nil || len(calls) != 1 {
+		t.Fatalf("generic failure: %v calls %v", err, calls)
+	}
+	calls = nil
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	e.Ctx = ctx
+	fakeTools(e, &calls, noInstaller, "winget")
+	if err := NewOCICLIStep().Apply(e, &Receipt{}); err == nil || len(calls) != 1 {
+		t.Fatalf("cancelled: %v calls %v", err, calls)
 	}
 }
 

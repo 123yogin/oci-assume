@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"os"
 	"os/exec"
@@ -24,7 +25,7 @@ func setupEnv(cmd *cobra.Command, d *deps, sh string) (*onboard.Env, error) {
 	}
 	return &onboard.Env{
 		GOOS: d.goos, Home: home, StateDir: dir, Shell: sh,
-		In: cmd.InOrStdin(), Out: cmd.OutOrStdout(),
+		In: bufio.NewReader(cmd.InOrStdin()), Out: cmd.OutOrStdout(), // one reader shared by Run and prompting steps
 		Interactive: d.isTTY() && os.Getenv("CI") == "",
 		Exec: func(ctx context.Context, name string, args ...string) (string, error) {
 			b, err := exec.CommandContext(ctx, name, args...).CombinedOutput() // #nosec G204 -- steps pass fixed commands

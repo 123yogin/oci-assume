@@ -88,12 +88,16 @@ func runAssume(ctx context.Context, d *deps, f *flags, args []string) error {
 	return nil
 }
 
-// pickOrLogin offers the first login when there are no session profiles, else runs the picker.
+// pickOrLogin offers the first login when there are no profiles at all, else runs the picker.
 // loadErr is a missing-config error, kept for when the login is declined or impossible.
 func pickOrLogin(ctx context.Context, d *deps, ps []ociconfig.Profile, loadErr error, timeout time.Duration) (string, error) {
-	if d.isTTY() && !hasSession(ps) {
-		fmt.Fprint(d.stderr, "oci-assume: no OCI session profiles found → create one now? [Y/n] ")
-		if yes(d.stdin) {
+	if d.isTTY() && len(ps) == 0 {
+		fmt.Fprint(d.stderr, "oci-assume: no OCI profiles found → create a session profile now? [Y/n] ")
+		ok, err := yes(ctx, d.stdin)
+		if err != nil {
+			return "", err
+		}
+		if ok {
 			return newProfile(ctx, d, timeout)
 		}
 	}
@@ -107,39 +111,20 @@ func pickOrLogin(ctx context.Context, d *deps, ps []ociconfig.Profile, loadErr e
 	return name, err
 }
 
-func hasSession(ps []ociconfig.Profile) bool {
-	for _, p := range ps {
-		if p.IsSession() {
-			return true
-		}
+// yes reads a [Y/n] answer; Enter is yes, EOF is no, and Ctrl-C returns ctx.Err().
+func yes(ctx context.Context, in *os.File) (bool, error) {
+	line, err := onboard.ReadLine(ctx, in)
+	if cerr := ctx.Err(); cerr != nil {
+		return false, cerr
 	}
-	return false
-}
-
-// yes reads a [Y/n] answer byte by byte, so later prompts still see their input.
-func yes(in *os.File) bool {
-	var line []byte
-	buf := make([]byte, 1)
-	for {
-		n, err := in.Read(buf)
-		if n == 1 && buf[0] == '\n' {
-			break
-		}
-		if n == 1 {
-			line = append(line, buf[0])
-		}
-		if err != nil {
-			if len(line) == 0 {
-				return false // EOF declines
-			}
-			break
-		}
+	if err != nil && line == "" {
+		return false, nil
 	}
-	switch strings.ToLower(strings.TrimSpace(string(line))) {
+	switch strings.ToLower(strings.TrimSpace(line)) {
 	case "", "y", "yes":
-		return true
+		return true, nil
 	}
-	return false
+	return false, nil
 }
 
 // newProfile runs the setup login flow with prompts on stderr, so stdout stays eval-safe.
@@ -149,7 +134,7 @@ func newProfile(ctx context.Context, d *deps, timeout time.Duration) (string, er
 		return "", err
 	}
 	e := &onboard.Env{GOOS: d.goos, In: d.stdin, Out: d.stderr, Interactive: true, Getenv: os.Getenv, Now: d.now}
-	return onboard.LoginFlow(ctx, e, func(ctx context.Context, name, region string) error {
+	return onboard.LoginFlow(ctx, e, ociconfig.DefaultPath(), func(ctx context.Context, name, region string) error {
 		return ensure.Login(ctx, r, ociconfig.Profile{Name: name}, region, timeout)
 	})
 }
