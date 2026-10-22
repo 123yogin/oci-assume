@@ -16,7 +16,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 mkdir -p "$T/rel" "$T/pkg"
 # shellcheck disable=SC2016
-printf '#!/bin/sh\nif [ "${1:-}" = setup ]; then echo "setup $*" >> "$SETUP_LOG"; exit "${FAKE_SETUP_EXIT:-0}"; fi\necho fake-oci-assume\n' > "$T/pkg/oci-assume"
+printf '#!/bin/sh\nif [ "${1:-}" = setup ]; then echo "setup $* inst=${OCI_ASSUME_INSTALLER:-}" >> "$SETUP_LOG"; exit "${FAKE_SETUP_EXIT:-0}"; fi\necho fake-oci-assume\n' > "$T/pkg/oci-assume"
 chmod 755 "$T/pkg/oci-assume"
 tar -czf "$T/rel/$archive" -C "$T/pkg" oci-assume
 (cd "$T/rel" && sha "$archive" | awk '{ print $1 "  " $2 }' > checksums.txt)
@@ -81,9 +81,9 @@ pty() {
 }
 if command -v script >/dev/null 2>&1; then
   : > "$SETUP_LOG"; pty "$T/p1" ""
-  grep -qx 'setup setup' "$SETUP_LOG" || fail "setup not run on pty: $(cat "$SETUP_LOG")"
+  grep -qx 'setup setup inst=1' "$SETUP_LOG" || fail "setup not run on pty: $(cat "$SETUP_LOG")"
   : > "$SETUP_LOG"; pty "$T/p2" "--yes"
-  grep -qx 'setup setup --yes' "$SETUP_LOG" || fail "--yes not passed: $(cat "$SETUP_LOG")"
+  grep -qx 'setup setup --yes inst=1' "$SETUP_LOG" || fail "--yes not passed: $(cat "$SETUP_LOG")"
   : > "$SETUP_LOG"; pty "$T/p3" "--no-setup"
   [ ! -s "$SETUP_LOG" ] || fail "--no-setup ignored"
   : > "$SETUP_LOG"; pty "$T/p4" "" OCI_ASSUME_NO_SETUP=1

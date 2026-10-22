@@ -32,7 +32,7 @@ import (
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "setup" {
 		f, _ := os.OpenFile(os.Getenv("SETUP_LOG"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-		f.WriteString(strings.Join(os.Args[1:], " ") + "\n")
+		f.WriteString(strings.Join(os.Args[1:], " ") + " inst=" + os.Getenv("OCI_ASSUME_INSTALLER") + "\n")
 		f.Close()
 		n, _ := strconv.Atoi(os.Getenv("FAKE_SETUP_EXIT"))
 		os.Exit(n)
@@ -100,16 +100,18 @@ if ($LASTEXITCODE -eq 0) { Fail 'bad version accepted' }
 $r = Invoke-Install (Join-Path $T 's1')
 if ($r.Code -ne 0) { Fail "setup install failed: $($r.Out)" }
 if (-not (Test-Path $env:SETUP_LOG)) { Fail "setup did not run: $($r.Out)" }
-if ((Get-Content $env:SETUP_LOG) -ne 'setup') { Fail "setup args wrong: $($r.Out) $(Get-Content $env:SETUP_LOG)" }
+if ((Get-Content $env:SETUP_LOG) -ne 'setup inst=1') { Fail "setup args wrong: $($r.Out) $(Get-Content $env:SETUP_LOG)" }
 Remove-Item $env:SETUP_LOG
 $r = Invoke-Install (Join-Path $T 's2') @('-Yes')
-if ((Get-Content $env:SETUP_LOG) -ne 'setup --yes') { Fail '-Yes not passed' }
+if ((Get-Content $env:SETUP_LOG) -ne 'setup --yes inst=1') { Fail '-Yes not passed' }
 Remove-Item $env:SETUP_LOG
 $env:OCI_ASSUME_YES = '1'
 $r = Invoke-Install (Join-Path $T 's3')
 Remove-Item Env:\OCI_ASSUME_YES
-if ((Get-Content $env:SETUP_LOG) -ne 'setup --yes') { Fail 'OCI_ASSUME_YES not passed' }
+if ((Get-Content $env:SETUP_LOG) -ne 'setup --yes inst=1') { Fail 'OCI_ASSUME_YES not passed' }
 Remove-Item $env:SETUP_LOG
+
+if ($env:OCI_ASSUME_INSTALLER) { Fail 'installer var leaked to the caller' }
 
 # 6: a failing setup warns but does not fail the install.
 $env:FAKE_SETUP_EXIT = '3'

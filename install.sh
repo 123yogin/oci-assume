@@ -94,7 +94,7 @@ main() {
   # Hand off to setup only with a real terminal on both stdout and /dev/tty.
   if [ -z "$nosetup" ] && [ -t 1 ] && { : </dev/tty; } 2>/dev/null; then
     # shellcheck disable=SC2086
-    if ! "$dest/oci-assume" setup ${yes:+--yes} </dev/tty; then
+    if ! OCI_ASSUME_INSTALLER=1 "$dest/oci-assume" setup ${yes:+--yes} </dev/tty; then
       echo "oci-assume installed; setup did not finish. Re-run: oci-assume setup" >&2
     fi
   else

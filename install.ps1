@@ -138,7 +138,13 @@ function Install-OciAssume {
     } else {
         $setupArgs = @('setup')
         if ($Yes) { $setupArgs += '--yes' }
-        & (Join-Path $dest 'oci-assume.exe') @setupArgs
+        $prev = $env:OCI_ASSUME_INSTALLER
+        $env:OCI_ASSUME_INSTALLER = '1'
+        try {
+            & (Join-Path $dest 'oci-assume.exe') @setupArgs
+        } finally {
+            if ($null -eq $prev) { Remove-Item Env:\OCI_ASSUME_INSTALLER -ErrorAction SilentlyContinue } else { $env:OCI_ASSUME_INSTALLER = $prev }
+        }
         if ($LASTEXITCODE -ne 0) {
             Write-Warning 'oci-assume installed; setup did not finish. Re-run: oci-assume setup'
         }
