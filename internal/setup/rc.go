@@ -263,12 +263,45 @@ func BinDir(e *Env) (dir string, needed bool) {
 	if n := strings.ToLower(filepath.Base(exe)); n != "oci-assume" && n != "oci-assume.exe" {
 		return "", false
 	}
-	if e.LookPath != nil {
-		if p, err := e.LookPath("oci-assume"); err == nil && (samePath(e, p, exe) || scoopShim(p)) {
-			return filepath.Dir(exe), false
-		}
+	if p, err := lookNewShell(e); err == nil && (samePath(e, p, exe) || scoopShim(p)) {
+		return filepath.Dir(exe), false
 	}
 	return filepath.Dir(exe), true
+}
+
+// lookNewShell finds oci-assume as a new shell would. On Windows that is the registry PATH, since
+// install.ps1 also patches its own session and a stale session lacks the user PATH.
+func lookNewShell(e *Env) (string, error) {
+	if e.GOOS == "windows" && e.NewShellPath != nil {
+		if path, err := e.NewShellPath(); err == nil {
+			return lookIn(e, path)
+		}
+	}
+	if e.LookPath == nil {
+		return "", errors.New("LookPath unavailable")
+	}
+	return e.LookPath("oci-assume")
+}
+
+// lookIn searches a Windows PATH string for oci-assume with each PATHEXT extension.
+func lookIn(e *Env, path string) (string, error) {
+	exts := getenv(e, "PATHEXT")
+	if exts == "" {
+		exts = ".COM;.EXE;.BAT;.CMD"
+	}
+	for _, d := range strings.Split(path, ";") {
+		d = strings.Trim(strings.TrimSpace(d), `"`)
+		if d == "" {
+			continue
+		}
+		for _, x := range strings.Split(strings.ToLower(exts), ";") {
+			p := filepath.Join(d, "oci-assume"+x)
+			if fi, err := os.Stat(p); x != "" && err == nil && fi.Mode().IsRegular() {
+				return p, nil
+			}
+		}
+	}
+	return "", errors.New("oci-assume not on the new-shell PATH")
 }
 
 // scoopShim reports whether p is Scoop's oci-assume.exe shim, which launches the real binary.

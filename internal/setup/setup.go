@@ -23,6 +23,7 @@ type Env struct {
 	ExecTTY                     func(ctx context.Context, name string, args ...string) error           // stdio to terminal
 	LookPath                    func(string) (string, error)
 	Executable                  func() (string, error) // the running binary; nil skips the PATH line
+	NewShellPath                func() (string, error) // windows: PATH a new shell starts with (registry); nil uses LookPath
 	Getenv                      func(string) string
 	Now                         func() time.Time
 	Ctx                         context.Context // steps use e.Context() for Exec/ExecTTY
