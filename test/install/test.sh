@@ -16,7 +16,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 mkdir -p "$T/rel" "$T/pkg"
 # shellcheck disable=SC2016
-printf '#!/bin/sh\nif [ "${1:-}" = setup ]; then echo "setup $*" >> "$SETUP_LOG"; exit 0; fi\necho fake-oci-assume\n' > "$T/pkg/oci-assume"
+printf '#!/bin/sh\nif [ "${1:-}" = setup ]; then echo "setup $*" >> "$SETUP_LOG"; exit "${FAKE_SETUP_EXIT:-0}"; fi\necho fake-oci-assume\n' > "$T/pkg/oci-assume"
 chmod 755 "$T/pkg/oci-assume"
 tar -czf "$T/rel/$archive" -C "$T/pkg" oci-assume
 (cd "$T/rel" && sha "$archive" | awk '{ print $1 "  " $2 }' > checksums.txt)
@@ -74,9 +74,9 @@ pty() {
   extra=${3:-}
   cmd="$extra OCI_ASSUME_BASE_URL=file://$T/rel OCI_ASSUME_INSTALL_DIR=$1 SETUP_LOG=$SETUP_LOG sh $root/install.sh --version v9.9.9 $2"
   if [ "$(uname -s)" = Darwin ]; then
-    script -q /dev/null sh -c "$cmd" >/dev/null 2>&1 </dev/null || true
+    script -q /dev/null sh -c "$cmd" >"$T/pty.out" 2>&1 </dev/null && PTY_RC=0 || PTY_RC=$?
   else
-    script -qec "$cmd" /dev/null >/dev/null 2>&1 </dev/null || true
+    script -qec "$cmd" /dev/null >"$T/pty.out" 2>&1 </dev/null && PTY_RC=0 || PTY_RC=$?
   fi
 }
 if command -v script >/dev/null 2>&1; then
@@ -88,6 +88,11 @@ if command -v script >/dev/null 2>&1; then
   [ ! -s "$SETUP_LOG" ] || fail "--no-setup ignored"
   : > "$SETUP_LOG"; pty "$T/p4" "" OCI_ASSUME_NO_SETUP=1
   [ ! -s "$SETUP_LOG" ] || fail "OCI_ASSUME_NO_SETUP ignored"
+  # A failing setup must not fail the install, only print guidance.
+  : > "$SETUP_LOG"; pty "$T/p5" "" FAKE_SETUP_EXIT=3
+  [ "$PTY_RC" = 0 ] || fail "failing setup masked a good install (rc=$PTY_RC)"
+  [ -x "$T/p5/oci-assume" ] || fail "binary missing after failing setup"
+  grep -q 'setup did not finish' "$T/pty.out" || fail "no setup-failed guidance: $(cat "$T/pty.out")"
 else
   echo "SKIP pty cases: script(1) not found"
 fi

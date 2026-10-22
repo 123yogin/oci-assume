@@ -7,12 +7,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// resolveVersion falls back to the module version for `go install @vX` builds.
+// resolveVersion uses the module version for `go install @vX` builds (a sum marks a real module).
 func resolveVersion(read func() (*debug.BuildInfo, bool)) string {
 	if Version != "dev" {
 		return Version
 	}
-	if bi, ok := read(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+	if bi, ok := read(); ok && bi.Main.Sum != "" && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
 		return bi.Main.Version
 	}
 	return Version

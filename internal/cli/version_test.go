@@ -9,7 +9,7 @@ func TestVersionFromBuildInfo(t *testing.T) {
 	old := Version
 	t.Cleanup(func() { Version = old })
 	read := func() (*debug.BuildInfo, bool) {
-		return &debug.BuildInfo{Main: debug.Module{Version: "v1.2.3"}}, true
+		return &debug.BuildInfo{Main: debug.Module{Version: "v1.2.3", Sum: "h1:x"}}, true
 	}
 	cases := []struct{ in, want string }{
 		{"dev", "v1.2.3"},
@@ -22,6 +22,12 @@ func TestVersionFromBuildInfo(t *testing.T) {
 		}
 	}
 	Version = "dev"
+	nosum := func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Main: debug.Module{Version: "v1.2.3"}}, true
+	}
+	if got := resolveVersion(nosum); got != "dev" {
+		t.Errorf("no sum: got %q", got)
+	}
 	devel := func() (*debug.BuildInfo, bool) {
 		return &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}}, true
 	}
