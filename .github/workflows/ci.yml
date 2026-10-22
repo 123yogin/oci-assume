@@ -80,6 +80,20 @@ jobs:
           persist-credentials: false
       - run: make install-test
 
+  install-test-windows:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: install.ps1 (Windows PowerShell 5.1)
+        shell: powershell
+        run: .\test\install\test.ps1
+      - name: install.ps1 (PowerShell 7)
+        shell: pwsh
+        run: ./test/install/test.ps1
+
   scheduler-smoke:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
