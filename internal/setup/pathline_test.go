@@ -3,6 +3,7 @@ package setup
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -161,5 +162,65 @@ func TestRunWarnsWhenStillNotOnPath(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "not on PATH") {
 		t.Fatalf("warned although the hook adds PATH: %q", out.String())
+	}
+}
+
+func TestHookPathLinePwshSmartQuotesEscaped(t *testing.T) {
+	prof := filepath.Join(t.TempDir(), "profile.ps1")
+	e, _ := hookEnv(t, "windows", nil, map[string]string{"powershell " + pwshArgs: prof + "\r\n"})
+	e.Shell = "pwsh"
+	dir := filepath.Join(t.TempDir(), "x“;Write-Host PWNED;“”„")
+	withBinary(t, e, dir, "")
+	apply(t, e)
+	line := strings.SplitN(read(t, prof), "\r\n", 3)[1]
+	if !strings.HasPrefix(line, "$env:Path = ") || !strings.Contains(line, "x`“;Write-Host PWNED;`“`”`„") {
+		t.Fatalf("unescaped smart quotes: %q", line)
+	}
+	pwsh, err := exec.LookPath("pwsh")
+	if err != nil {
+		t.Skip("pwsh not installed")
+	}
+	// Run only the PATH line; it must set PATH to dir and print nothing.
+	out, err := exec.Command(pwsh, "-NoProfile", "-Command", "$env:Path = ''; "+line+"; [Console]::Out.Write($env:Path)").CombinedOutput()
+	if err != nil || strings.Contains(string(out), "PWNED\n") || string(out) != dir+";" {
+		t.Fatalf("pwsh ran %q: %q %v", line, out, err)
+	}
+}
+
+func TestHookNoPathLineForControlChars(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("newlines are not legal in Windows file names")
+	}
+	for _, sh := range []string{"bash", "fish"} {
+		e, out := hookEnv(t, "linux", nil, nil)
+		e.Shell, e.Interactive = sh, true
+		dir := filepath.Join(t.TempDir(), "a\n# <<< oci-assume <<<\nb")
+		withBinary(t, e, dir, "")
+		if _, err := Run(e, []Step{NewHookStep()}, Options{Yes: true}); err != nil {
+			t.Fatal(err)
+		}
+		rc := filepath.Join(e.Home, ".bashrc")
+		if sh == "fish" {
+			rc = filepath.Join(e.Home, ".config", "fish", "conf.d", "oci-assume.fish")
+		}
+		if got := read(t, rc); strings.Contains(got, "PATH") || strings.Contains(got, "fish_add_path") {
+			t.Fatalf("%s: PATH line for a control-char dir: %q", sh, got)
+		}
+		if !strings.Contains(out.String(), "not on PATH in new shells") {
+			t.Fatalf("%s: no PATH warning: %q", sh, out.String())
+		}
+	}
+}
+
+func TestBinDirScoopShimCountsAsOnPath(t *testing.T) {
+	e, _ := hookEnv(t, "windows", nil, nil)
+	shim := filepath.Join(t.TempDir(), "scoop", "shims", "oci-assume.exe")
+	withBinary(t, e, filepath.Join(t.TempDir(), "scoop", "apps", "oci-assume", "current"), shim)
+	if _, needed := BinDir(e); needed {
+		t.Fatal("scoop shim treated as not on PATH")
+	}
+	withBinary(t, e, t.TempDir(), filepath.Join(t.TempDir(), "other", "shims", "oci-assume.exe"))
+	if _, needed := BinDir(e); !needed {
+		t.Fatal("non-scoop shims dir treated as on PATH")
 	}
 }

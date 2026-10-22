@@ -74,8 +74,8 @@ homebrew_casks:
           if OS.mac? && system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/oci-assume"]
           end
-    # Unload the background agent setup installs; rc blocks are left for `oci-assume uninstall`.
-    uninstall:
+    # zap runs only on `brew uninstall --zap`, so upgrades keep the background agent.
+    zap:
       launchctl:
         - io.github.123yogin.oci-assume
 

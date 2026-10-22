@@ -104,7 +104,7 @@ oci-assume uninstall           # add --purge to also delete the state directory 
 
 It removes the shell hook blocks, the background job and the setup receipt, and is safe to run twice. Then remove the binary with the tool you installed it with (`uninstall` prints the commands):
 
-- Homebrew: `brew uninstall --cask oci-assume`
+- Homebrew: `brew uninstall --cask oci-assume`. Upgrades keep the background agent; `brew uninstall --zap --cask oci-assume` also unloads it if you skipped `oci-assume uninstall`
 - Scoop: `scoop uninstall oci-assume`
 - Windows (`install.ps1`): delete `%LOCALAPPDATA%\Programs\oci-assume` and remove it from your user PATH
 - deb/rpm: `sudo apt remove oci-assume` or `sudo dnf remove oci-assume`

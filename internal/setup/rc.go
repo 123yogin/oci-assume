@@ -237,7 +237,7 @@ func hookTarget(e *Env, sh, path, kind string) Target {
 	}
 	t := Target{path, kind, wrap(hookLine(sh))}
 	dir, needed := BinDir(e)
-	if dir == "" {
+	if dir == "" || !pathLineSafe(dir) {
 		return t
 	}
 	withPath := Target{path, kind, wrap(pathLine(e, sh, dir) + "\n" + hookLine(sh))}
@@ -264,11 +264,23 @@ func BinDir(e *Env) (dir string, needed bool) {
 		return "", false
 	}
 	if e.LookPath != nil {
-		if p, err := e.LookPath("oci-assume"); err == nil && samePath(e, p, exe) {
+		if p, err := e.LookPath("oci-assume"); err == nil && (samePath(e, p, exe) || scoopShim(p)) {
 			return filepath.Dir(exe), false
 		}
 	}
 	return filepath.Dir(exe), true
+}
+
+// scoopShim reports whether p is Scoop's oci-assume.exe shim, which launches the real binary.
+func scoopShim(p string) bool {
+	d := filepath.Dir(p)
+	return strings.EqualFold(filepath.Base(p), "oci-assume.exe") &&
+		strings.EqualFold(filepath.Base(d), "shims") && strings.EqualFold(filepath.Base(filepath.Dir(d)), "scoop")
+}
+
+// pathLineSafe rejects dirs with control characters; a newline could forge the block's end marker.
+func pathLineSafe(dir string) bool {
+	return !strings.ContainsFunc(dir, func(r rune) bool { return r < 0x20 || r == 0x7f })
 }
 
 func samePath(e *Env, a, b string) bool {
@@ -295,7 +307,8 @@ func pathLine(e *Env, sh, dir string) string {
 		if e.GOOS == "windows" {
 			sep, v = ";", "$env:Path"
 		}
-		q := strings.NewReplacer("`", "``", `"`, "`\"", "$", "`$").Replace(dir)
+		// PowerShell also ends strings at the curly double quotes U+201C-U+201E.
+		q := strings.NewReplacer("`", "``", `"`, "`\"", "$", "`$", "\u201c", "`\u201c", "\u201d", "`\u201d", "\u201e", "`\u201e").Replace(dir)
 		return v + ` = "` + q + sep + `" + ` + v
 	}
 	return `export PATH="` + homeRel(e, dir, `\`, `"`, `$`, "`") + `:$PATH"`

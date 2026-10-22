@@ -88,6 +88,8 @@ The entry records `PATH`, plus `OCI_CLI_CONFIG_FILE`, `OCI_ASSUME_STATE_DIR` and
 
 `oci-assume daemon status` shows whether the job is installed and the last background result per profile (manual `refresh` runs are not listed). `oci-assume daemon uninstall` removes it and records that you turned it off.
 
+On macOS, `brew upgrade` and `brew reinstall` leave the launchd agent alone; only `brew uninstall --zap` unloads it.
+
 ### Self-heal
 
 If the receipt says you agreed to background refresh, every `oci-assume` command (except `prompt`, `init`, `setup`, `uninstall`, `daemon`, `doctor`, `version`, `help` and `completion`) checks the job. When it is missing, cannot be read, or points at a binary that no longer exists (for example after a moved or deleted install), the command reinstalls it silently. The check runs at most once per 10 minutes, and failures go to the log, never to your terminal. A job you declined or removed with `daemon uninstall` is never reinstalled.

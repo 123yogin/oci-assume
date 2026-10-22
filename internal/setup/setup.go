@@ -178,6 +178,9 @@ func pathWarning(e *Env, steps []Step, o Options) string {
 	if !needed {
 		return ""
 	}
+	if !pathLineSafe(dir) {
+		return dir
+	}
 	for _, s := range steps {
 		if s.ID() == "shell-hook" && !o.Skip[s.ID()] {
 			if done, err := s.Done(e); done && err == nil {
