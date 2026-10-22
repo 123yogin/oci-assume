@@ -379,7 +379,9 @@ func TestPickerMarksActiveProfile(t *testing.T) {
 	}
 	active := map[string]bool{}
 	for _, it := range e.picked {
-		active[it.Profile.Name] = it.Active
+		if !it.New {
+			active[it.Profile.Name] = it.Active
+		}
 	}
 	if len(active) != 3 || !active["prod-admin"] || active["dev"] || active["status"] {
 		t.Fatalf("active flags %v", active)

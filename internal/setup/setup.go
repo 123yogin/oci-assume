@@ -46,6 +46,9 @@ type Options struct {
 // ErrNeedsYes means a non-interactive run had pending steps but no --yes.
 var ErrNeedsYes = errors.New("not running interactively; re-run with --yes to apply")
 
+// ErrSkipped, wrapped as "skipped: <reason>", is a non-fatal Apply result; Run reports it and continues.
+var ErrSkipped = errors.New("skipped")
+
 const doneLine = "Done. Open a new terminal, then run: oci-assume"
 
 // DefaultSteps returns the steps in order: oci-cli, exec-policy (windows), shell-hook, background, first-login.
@@ -102,7 +105,10 @@ func Run(e *Env, steps []Step, o Options) (applied []string, err error) {
 				continue
 			}
 		}
-		if err := s.Apply(e, &r); err != nil {
+		if err := s.Apply(e, &r); errors.Is(err, ErrSkipped) {
+			fmt.Fprintf(e.Out, "– %s %v\n", id, err)
+			continue
+		} else if err != nil {
 			return applied, fmt.Errorf("%s: %w", id, err)
 		}
 		r.Version = receiptVersion

@@ -23,6 +23,8 @@ import (
 var (
 	ErrNoTTY     = errors.New("no terminal available for the profile picker")
 	ErrCancelled = errors.New("profile selection cancelled")
+	// ErrNewProfile means the user chose the "+ New profile…" row.
+	ErrNewProfile = errors.New("new profile requested")
 )
 
 // Item is one selectable profile with its remaining session lifetime.
@@ -30,11 +32,14 @@ type Item struct {
 	Profile   ociconfig.Profile
 	Remaining time.Duration
 	Active    bool // the profile currently in $OCI_CLI_PROFILE
+	New       bool // the "+ New profile…" row; Profile is ignored
 }
 
 // rank orders the active profile, valid sessions, API-key profiles, then expired ones.
 func rank(it Item) int {
 	switch {
+	case it.New:
+		return 4
 	case it.Active:
 		return 0
 	case !it.Profile.IsSession():
@@ -150,6 +155,9 @@ func (s *screen) run(sigs <-chan os.Signal) (string, error) {
 			if s.m.update(k) {
 				if s.m.cancelled {
 					return "", ErrCancelled
+				}
+				if s.m.newProfile {
+					return "", ErrNewProfile
 				}
 				return s.m.choice, nil
 			}
