@@ -11,6 +11,7 @@ import (
 	"github.com/123yogin/oci-assume/internal/ensure"
 	"github.com/123yogin/oci-assume/internal/ociconfig"
 	"github.com/123yogin/oci-assume/internal/picker"
+	onboard "github.com/123yogin/oci-assume/internal/setup"
 	"github.com/123yogin/oci-assume/internal/shell"
 	"github.com/123yogin/oci-assume/internal/state"
 	"github.com/123yogin/oci-assume/internal/token"
@@ -38,14 +39,19 @@ func runAssume(ctx context.Context, d *deps, f *flags, args []string) error {
 		return err
 	}
 	ps, err := loadProfiles()
-	if err != nil {
-		return err
-	}
 	name := ""
-	if len(args) == 1 {
-		name = args[0]
-	} else if name, err = choose(d, ps); err != nil {
+	switch {
+	case err != nil && (len(args) == 1 || !errors.Is(err, ociconfig.ErrNotFound)):
 		return err
+	case len(args) == 1:
+		name = args[0]
+	default:
+		if name, err = pickOrLogin(ctx, d, ps, err, loginTimeout); err != nil {
+			return err
+		}
+		if ps, err = loadProfiles(); err != nil {
+			return err
+		}
 	}
 	p, err := findProfile(ps, name)
 	if err != nil {
@@ -82,6 +88,57 @@ func runAssume(ctx context.Context, d *deps, f *flags, args []string) error {
 	return nil
 }
 
+// pickOrLogin offers the first login when there are no profiles at all, else runs the picker.
+// loadErr is a missing-config error, kept for when the login is declined or impossible.
+func pickOrLogin(ctx context.Context, d *deps, ps []ociconfig.Profile, loadErr error, timeout time.Duration) (string, error) {
+	if d.isTTY() && len(ps) == 0 {
+		fmt.Fprint(d.stderr, "oci-assume: no OCI profiles found → create a session profile now? [Y/n] ")
+		ok, err := yes(ctx, d.stdin)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return newProfile(ctx, d, timeout)
+		}
+	}
+	if loadErr != nil {
+		return "", loadErr
+	}
+	name, err := choose(d, ps)
+	if errors.Is(err, picker.ErrNewProfile) {
+		return newProfile(ctx, d, timeout)
+	}
+	return name, err
+}
+
+// yes reads a [Y/n] answer; Enter is yes, EOF is no, and Ctrl-C returns ctx.Err().
+func yes(ctx context.Context, in *os.File) (bool, error) {
+	line, err := onboard.ReadLine(ctx, in)
+	if cerr := ctx.Err(); cerr != nil {
+		return false, cerr
+	}
+	if err != nil && line == "" {
+		return false, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "", "y", "yes":
+		return true, nil
+	}
+	return false, nil
+}
+
+// newProfile runs the setup login flow with prompts on stderr, so stdout stays eval-safe.
+func newProfile(ctx context.Context, d *deps, timeout time.Duration) (string, error) {
+	r, err := d.newRunner()
+	if err != nil {
+		return "", err
+	}
+	e := &onboard.Env{GOOS: d.goos, In: d.stdin, Out: d.stderr, Interactive: true, Getenv: os.Getenv, Now: d.now}
+	return onboard.LoginFlow(ctx, e, ociconfig.DefaultPath(), func(ctx context.Context, name, region string) error {
+		return ensure.Login(ctx, r, ociconfig.Profile{Name: name}, region, timeout)
+	})
+}
+
 // choose runs the picker, or lists profiles and fails without a terminal.
 func choose(d *deps, ps []ociconfig.Profile) (string, error) {
 	if !d.isTTY() {
@@ -93,10 +150,11 @@ func choose(d *deps, ps []ociconfig.Profile) (string, error) {
 	}
 	now := d.now()
 	active := os.Getenv("OCI_CLI_PROFILE")
-	items := make([]picker.Item, len(ps))
+	items := make([]picker.Item, len(ps), len(ps)+1)
 	for i, p := range ps {
 		items[i] = picker.Item{Profile: p, Remaining: remaining(p, now), Active: p.Name == active}
 	}
+	items = append(items, picker.Item{New: true})
 	name, err := d.pick(items, d.stdin)
 	if errors.Is(err, picker.ErrNoTTY) {
 		return "", asConfig(err)

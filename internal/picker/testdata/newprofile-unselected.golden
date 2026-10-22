@@ -1,0 +1,11 @@
+Select an OCI profile                             6/6
+> type to filter
+   PROFILE                   REGION           SESSION
+>● dev                       us-phoenix-1     48m
+   sandbox-phx               us-phoenix-1     1h05m
+   staging                   us-ashburn-1     7m
+   prod-admin                eu-frankfurt-1   api-key
+   DEFAULT                   uk-london-1      expired
+   analytics-team-readonly   ap-singapore-1   expired
+   + New profile…
+↑/↓ move · type to filter · enter select · esc cancel

@@ -207,7 +207,7 @@ func TestPickerFirstFrameIsFast(t *testing.T) {
 	if err := finish(t, cmd, buf, 3*time.Second); !errors.As(err, &ee) {
 		t.Errorf("esc should exit non-zero, got %v", err)
 	}
-	cleared(t, buf.String(), 6)
+	cleared(t, buf.String(), 7) // two profiles plus the new-profile row
 }
 
 func TestPickerSelectsOnRealPty(t *testing.T) {
@@ -222,7 +222,7 @@ func TestPickerSelectsOnRealPty(t *testing.T) {
 		t.Fatalf("exit %v; output %q", err, buf.String())
 	}
 	out := buf.String()
-	cleared(t, out, 6)
+	cleared(t, out, 7)
 	if i := strings.Index(out, "OCI_CLI_PROFILE='DEFAULT'"); i < strings.LastIndex(out, "\x1b[J") {
 		t.Errorf("export missing or before the clear: %q", out)
 	}

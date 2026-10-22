@@ -55,6 +55,12 @@ type Options struct {
 // ErrNeedsYes means a non-interactive run had pending steps but no --yes.
 var ErrNeedsYes = errors.New("not running interactively; re-run with --yes to apply")
 
+// ErrSkipped, wrapped as "skipped: <reason>", is a non-fatal Apply result; Run reports it and continues.
+var ErrSkipped = errors.New("skipped")
+
+// skipper is an optional Step method: a non-empty reason skips a pending step without prompting.
+type skipper interface{ SkipReason(e *Env) string }
+
 const doneLine = "Done. Open a new terminal, then run: oci-assume"
 
 // DefaultSteps returns the steps in order: oci-cli, exec-policy (windows), shell-hook, background, first-login.
@@ -100,6 +106,13 @@ func Run(e *Env, steps []Step, o Options) (applied []string, err error) {
 			fmt.Fprintf(e.Out, "✓ %s already set up\n", id)
 			continue
 		}
+		if sk, ok := s.(skipper); ok {
+			if why := sk.SkipReason(e); why != "" {
+				fmt.Fprintf(e.Out, "– %s skipped: %s\n", id, why)
+				unapplied = true
+				continue
+			}
+		}
 		if !e.Interactive && !o.DryRun && (s.NeedsTTY() || !nonTTYSteps[id]) {
 			fmt.Fprintf(e.Out, "– %s needs an interactive terminal; run oci-assume setup\n", id)
 			unapplied = true
@@ -125,6 +138,11 @@ func Run(e *Env, steps []Step, o Options) (applied []string, err error) {
 		// Save even on failure: a partial Apply may have recorded what it changed.
 		if err := SaveReceipt(e.StateDir, r); err != nil {
 			return applied, errors.Join(aerr, fmt.Errorf("%s: save receipt: %w", id, err))
+		}
+		if errors.Is(aerr, ErrSkipped) {
+			fmt.Fprintf(e.Out, "– %s %v\n", id, aerr)
+			unapplied = true
+			continue
 		}
 		if aerr != nil {
 			return applied, fmt.Errorf("%s: %w", id, aerr)

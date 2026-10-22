@@ -16,6 +16,7 @@ const (
 	title       = "Select an OCI profile"
 	placeholder = "type to filter"
 	noMatches   = "no matching profiles"
+	newLabel    = "+ New profile…"
 	maxRows     = 10
 	gutter      = 3 // cursor, active marker, space
 	sep         = "   "
@@ -56,8 +57,10 @@ type model struct {
 	statusW int
 	color   bool
 
-	choice    string
-	cancelled bool
+	choice     string
+	cancelled  bool
+	newProfile bool
+	parked     bool // a query matched no profile: the cursor is off the new row until ↑/↓
 }
 
 func newModel(items []Item, color bool) model {
@@ -65,6 +68,10 @@ func newModel(items []Item, color bool) model {
 	Sort(sorted)
 	m := model{items: sorted, color: color, nameW: len("PROFILE"), regionW: len("REGION"), statusW: len("SESSION")}
 	for _, it := range sorted {
+		if it.New {
+			m.text = append(m.text, "") // never fuzzy-matched; filter keeps it last
+			continue
+		}
 		m.text = append(m.text, it.Profile.Name+" "+region(it))
 		m.nameW = max(m.nameW, ansi.StringWidth(it.Profile.Name))
 		m.regionW = max(m.regionW, ansi.StringWidth(region(it)))
@@ -100,10 +107,14 @@ func (m *model) update(k keyEvent) bool {
 		m.cancelled = true
 		return true
 	case keyEnter:
-		if len(m.matches) == 0 {
+		if len(m.matches) == 0 || m.parked {
 			return false
 		}
-		m.choice = m.items[m.matches[m.cursor]].Profile.Name
+		it := m.items[m.matches[m.cursor]]
+		m.choice, m.newProfile = it.Profile.Name, it.New
+		if it.New {
+			m.choice = ""
+		}
 		return true
 	case keyUp:
 		m.move(-1)
@@ -122,6 +133,10 @@ func (m *model) update(k keyEvent) bool {
 }
 
 func (m *model) move(d int) {
+	if m.parked {
+		m.parked = false
+		return
+	}
 	if n := len(m.matches); n > 0 {
 		m.cursor = (m.cursor + d + n) % n
 		m.scroll()
@@ -129,8 +144,9 @@ func (m *model) move(d int) {
 }
 
 // filter keeps rank order for an empty query, else fuzzy score with rank as tiebreak.
+// The new-profile row always stays, last.
 func (m *model) filter() {
-	m.cursor, m.offset = 0, 0
+	m.cursor, m.offset, m.parked = 0, 0, false
 	m.matches = m.matches[:0]
 	if m.query == "" {
 		for i := range m.items {
@@ -138,6 +154,7 @@ func (m *model) filter() {
 		}
 		return
 	}
+	defer m.keepNew()
 	res := fuzzy.FindNoSort(m.query, m.text)
 	sort.SliceStable(res, func(i, j int) bool {
 		if res[i].Score != res[j].Score {
@@ -148,6 +165,32 @@ func (m *model) filter() {
 	for _, r := range res {
 		m.matches = append(m.matches, r.Index)
 	}
+}
+
+func (m *model) keepNew() {
+	none := len(m.matches) == 0
+	for i, it := range m.items {
+		if it.New {
+			m.matches = append(m.matches, i)
+			m.parked = none
+		}
+	}
+}
+
+// noProfileMatch reports a query that matched only the new row.
+func (m model) noProfileMatch() bool {
+	return m.query != "" && len(m.matches) > 0 && m.profiles(m.matches) == 0
+}
+
+// profiles counts the real profiles among idx.
+func (m model) profiles(idx []int) int {
+	n := 0
+	for _, i := range idx {
+		if !m.items[i].New {
+			n++
+		}
+	}
+	return n
 }
 
 // layout picks the chrome that fits: the header and footer go first, then the title.
@@ -234,6 +277,9 @@ func (m model) row(i int, selected bool, nameW, regionW int) string {
 	if selected {
 		cur, nameSGR = m.paint(sgrAccent, ">"), sgrAccent
 	}
+	if it.New {
+		return cur + mark + " " + m.paint(nameSGR, newLabel)
+	}
 	if it.Active {
 		mark = m.paint(sgrGreen, "●")
 	}
@@ -259,7 +305,11 @@ func (m model) View() string {
 	}
 	titled, filter, chrome, rows := m.layout()
 	nameW, regionW := m.columns(w)
-	count := fmt.Sprintf("%d/%d", len(m.matches), len(m.items))
+	all := make([]int, len(m.items))
+	for i := range all {
+		all[i] = i
+	}
+	count := fmt.Sprintf("%d/%d", m.profiles(m.matches), m.profiles(all))
 	foot := fitFooter(w)
 	rowW := gutter + nameW + regionW + 2*len(sep) + m.statusW
 	panelW := min(w, max(rowW, ansi.StringWidth(foot), len(title)+1+len(count)))
@@ -280,13 +330,17 @@ func (m model) View() string {
 		b = append(b, m.paint(sgrDim, pad(gutter)+m.cell("", "PROFILE", nameW)+sep+
 			m.cell("", "REGION", regionW)+sep+"SESSION"))
 	}
+	shift := 0
+	if m.noProfileMatch() {
+		shift = 1 // "no matching profiles" sits above the new row
+	}
 	for i := 0; i < rows; i++ {
-		j := m.offset + i
+		j := m.offset + i - shift
 		switch {
-		case len(m.matches) == 0 && i == 0:
+		case (len(m.matches) == 0 || shift == 1) && i == 0:
 			b = append(b, pad(gutter)+m.paint(sgrDim, noMatches))
 		case j < len(m.matches):
-			b = append(b, m.row(m.matches[j], j == m.cursor, nameW, regionW))
+			b = append(b, m.row(m.matches[j], j == m.cursor && !m.parked, nameW, regionW))
 		default:
 			b = append(b, "")
 		}
