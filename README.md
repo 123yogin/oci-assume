@@ -1,72 +1,89 @@
 # oci-assume
 
-Switch OCI CLI profiles and keep browser (SSO) session tokens fresh, the way Granted's `assume` does for AWS.
+[![CI](https://github.com/123yogin/oci-assume/actions/workflows/ci.yml/badge.svg)](https://github.com/123yogin/oci-assume/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/123yogin/oci-assume)](https://github.com/123yogin/oci-assume/releases/latest)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-## Why
+**Switch OCI CLI profiles and never refresh a session token by hand again.** Like Granted's `assume` for AWS, but for Oracle Cloud.
 
-If you sign in with `oci session authenticate`, you know the routine:
-
-- The session token lasts 60 minutes, and the `oci` CLI never refreshes it for you.
-- You have to remember `oci session refresh` before it runs out.
-- Every command needs `--profile` and `--auth security_token`.
-
-`oci-assume <profile>` checks the session, refreshes it (or opens the browser login if it has expired), and sets `OCI_CLI_PROFILE`, `OCI_CLI_AUTH` and `OCI_CLI_REGION` in your current shell. A background job keeps recently used sessions alive. After that, plain `oci` commands just work.
-
-It wraps the official `oci` CLI for everything that writes credentials. It never touches your private keys and makes no network calls of its own.
+```console
+$ oci-assume                      # pick a profile
+$ oci iam region list             # no --profile, no --auth, it just works
+$ oci-assume status
+PROFILE       REGION        EXPIRES  STATE
+dev           us-ashburn-1  52m      ● active
+```
 
 ## Install
 
-Homebrew (macOS only; on Linux use curl, deb/rpm or `go install` below):
+You need the [OCI CLI](https://docs.oracle.com/en-us/iaas/Content/API/SDKDocs/cliinstall.htm) first (`brew install oci-cli` on macOS).
+
+### macOS
 
 ```sh
 brew install --cask 123yogin/tap/oci-assume
 ```
 
-Scoop (Windows):
-
-```powershell
-scoop bucket add 123yogin https://github.com/123yogin/scoop-bucket
-scoop install oci-assume
-```
-
-curl (macOS and Linux; verifies the SHA-256 checksum, installs to `~/.local/bin`):
+or, without Homebrew:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/123yogin/oci-assume/main/install.sh | sh
 ```
 
-Set `OCI_ASSUME_INSTALL_DIR` to install somewhere else, or pass `--version vX.Y.Z` to pin a release (`sh -s -- --version vX.Y.Z`).
-
-Debian, Ubuntu, Fedora and friends: download the `.deb` or `.rpm` from the [releases page](https://github.com/123yogin/oci-assume/releases) and install it with `dpkg -i` or `rpm -i`.
-
-With Go:
+### Linux
 
 ```sh
-go install github.com/123yogin/oci-assume/cmd/oci-assume@latest
+curl -fsSL https://raw.githubusercontent.com/123yogin/oci-assume/main/install.sh | sh
 ```
 
-You also need the [OCI CLI](https://docs.oracle.com/en-us/iaas/Content/API/SDKDocs/cliinstall.htm) on your `PATH` (or set `OCI_ASSUME_OCI_BIN`).
+Or grab the `.deb` / `.rpm` from the [latest release](https://github.com/123yogin/oci-assume/releases/latest), or `go install github.com/123yogin/oci-assume/cmd/oci-assume@latest`.
 
-## Quickstart
+### Windows (PowerShell)
 
-1. Add the hook to your shell startup file. The hook is a small function; a child process cannot change your shell's environment, so it has to live in the shell.
+Downloads the latest release, verifies its SHA-256 checksum and adds it to your user `PATH` (no admin needed):
 
-   | Shell | Line to add |
-   |---|---|
-   | zsh (`~/.zshrc`) | `eval "$(oci-assume init zsh)"` |
-   | bash (`~/.bashrc`) | `eval "$(oci-assume init bash)"` |
-   | fish (`~/.config/fish/config.fish`) | `oci-assume init fish \| source` |
-   | PowerShell (`$PROFILE`) | `oci-assume init pwsh \| Out-String \| Invoke-Expression` |
+```powershell
+$v = (Invoke-RestMethod https://api.github.com/repos/123yogin/oci-assume/releases/latest).tag_name.TrimStart("v")
+$arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "amd64" }
+$name = "oci-assume_${v}_windows_${arch}.zip"; $base = "https://github.com/123yogin/oci-assume/releases/download/v$v"
+$dir = "$env:LOCALAPPDATA\Programs\oci-assume"
+Invoke-WebRequest "$base/$name" -OutFile "$env:TEMP\$name"; Invoke-WebRequest "$base/checksums.txt" -OutFile "$env:TEMP\oci-assume-sums.txt"
+$want = ((Get-Content "$env:TEMP\oci-assume-sums.txt") | Where-Object { $_ -match ("  " + [regex]::Escape($name) + "$") }).Split(" ")[0]
+if ($want -ne (Get-FileHash "$env:TEMP\$name" -Algorithm SHA256).Hash.ToLower()) { throw "Checksum mismatch - not installing" }
+Expand-Archive "$env:TEMP\$name" -DestinationPath $dir -Force
+$p = [Environment]::GetEnvironmentVariable("Path", "User"); if ($p -notlike "*$dir*") { [Environment]::SetEnvironmentVariable("Path", "$p;$dir", "User") }; $env:Path += ";$dir"
+oci-assume version
+```
 
-2. Open a new shell and run `oci-assume`. Pick a profile from the list, or name one: `oci-assume dev`. If the session needs a login, your browser opens.
+A one-line `irm … | iex` installer and Scoop support are coming in the next release.
 
-3. Keep sessions fresh in the background:
+## Get started
 
-   ```sh
-   oci-assume daemon install
-   ```
+**1. Add the shell hook** (one time). Pick your shell:
 
-Check your setup any time with `oci-assume doctor`.
+| Shell | Run this once |
+|---|---|
+| zsh | `echo 'eval "$(oci-assume init zsh)"' >> ~/.zshrc && source ~/.zshrc` |
+| bash | `echo 'eval "$(oci-assume init bash)"' >> ~/.bashrc && source ~/.bashrc` |
+| fish | `echo 'oci-assume init fish \| source' >> ~/.config/fish/config.fish` |
+| PowerShell | `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser; Add-Content $PROFILE 'oci-assume init pwsh \| Out-String \| Invoke-Expression'; . $PROFILE` |
+
+The hook is a small shell function: a program can't change your shell's environment on its own, so this is what lets `oci-assume` set `OCI_CLI_PROFILE` for you.
+
+**2. Log in once** (skip if you already have a session profile):
+
+```sh
+oci session authenticate --profile-name dev --region us-ashburn-1
+```
+
+**3. Use it:**
+
+```sh
+oci-assume                    # pick a profile from the list (or: oci-assume dev)
+oci-assume daemon install     # keep sessions refreshed in the background
+```
+
+That's it. Sessions stay fresh in the background; you only log in through the browser again after Oracle's 24-hour limit. Check everything with `oci-assume doctor`.
 
 ## Commands
 
@@ -100,7 +117,7 @@ Flags available on every command: `--threshold <duration>` (refresh when less th
 4. macOS only: delete the log file `~/Library/Logs/oci-assume.log`.
 5. Remove the binary with the tool you installed it with:
    - Homebrew: `brew uninstall --cask oci-assume`
-   - Scoop: `scoop uninstall oci-assume`
+   - Windows (PowerShell install): delete `%LOCALAPPDATA%\Programs\oci-assume` and remove it from your user PATH
    - deb/rpm: `sudo apt remove oci-assume` or `sudo dnf remove oci-assume`
    - curl: `rm ~/.local/bin/oci-assume` (or the file in `$OCI_ASSUME_INSTALL_DIR`)
    - Go: `rm "$(go env GOPATH)/bin/oci-assume"`
