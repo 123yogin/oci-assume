@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/123yogin/oci-assume/internal/procattr"
 	"github.com/123yogin/oci-assume/internal/state"
 )
 
@@ -92,7 +93,7 @@ func ForOS(goos string) (Backend, error) {
 	case "linux":
 		return &systemd{s}, nil
 	}
-	return &schtasks{s}, nil
+	return &schtasks{s: s}, nil
 }
 
 // Render returns the scheduler files for goos (filename → content), using $PATH and the home dir.
@@ -101,7 +102,7 @@ func Render(goos, bin string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return render(goos, bin, os.Getenv("PATH"), home, captureEnv(os.Getenv))
+	return renderUser(goos, bin, os.Getenv("PATH"), home, windowsUser(os.Getenv), captureEnv(os.Getenv))
 }
 
 // captured are the variables a scheduled run inherits from install time, when set.
@@ -121,6 +122,7 @@ func captureEnv(getenv func(string) string) []envVar {
 
 type tmplData struct {
 	Label, Bin, Path, Log, Args string
+	User                        string // Windows logon trigger account
 	Env                         []envVar
 }
 
@@ -146,10 +148,17 @@ func validate(goos, bin, path string, env []envVar) error {
 }
 
 func render(goos, bin, path, home string, env []envVar) (map[string]string, error) {
+	return renderUser(goos, bin, path, home, "", env)
+}
+
+func renderUser(goos, bin, path, home, user string, env []envVar) (map[string]string, error) {
 	if err := validate(goos, bin, path, env); err != nil {
 		return nil, err
 	}
-	d := tmplData{Label: Label, Bin: bin, Path: path, Log: logPath(home), Args: winArgs(env)}
+	if strings.ContainsFunc(user, unicode.IsControl) {
+		return nil, fmt.Errorf("user %q contains control characters; cannot write a scheduler entry", user)
+	}
+	d := tmplData{Label: Label, Bin: bin, Path: path, Log: logPath(home), Args: winArgs(env), User: user}
 	for _, e := range env {
 		if e.Val != "" {
 			d.Env = append(d.Env, e)
@@ -272,6 +281,7 @@ func realExec(stdin, name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // G204: runs the platform scheduler tool by design
+	procattr.Hide(cmd)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}

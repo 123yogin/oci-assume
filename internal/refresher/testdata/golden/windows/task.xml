@@ -12,6 +12,11 @@
         <StopAtDurationEnd>false</StopAtDurationEnd>
       </Repetition>
     </TimeTrigger>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId>CORP\dev</UserId>
+      <Delay>PT1M</Delay>
+    </LogonTrigger>
   </Triggers>
   <Principals>
     <Principal id="Author">

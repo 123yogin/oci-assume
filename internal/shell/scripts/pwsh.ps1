@@ -33,6 +33,6 @@ function oci-assume {
 function OciAssumePrompt {
     $bin = (Get-Command oci-assume -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
     if (-not $bin) { return }
-    $p = & $bin prompt 2>$null
+    $p = & $bin prompt --tick 2>$null
     if ($p) { return "[oci $p]" }
 }

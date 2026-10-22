@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/123yogin/oci-assume/internal/refresher"
 	"github.com/123yogin/oci-assume/internal/state"
 )
 
@@ -34,6 +35,14 @@ func newDaemon(d *deps) *cobra.Command {
 			if err := b.Install(bin); err != nil {
 				return err
 			}
+			if w, ok := b.(refresher.Warner); ok {
+				for _, m := range w.Warnings() {
+					fmt.Fprintf(d.stderr, "oci-assume: warning: %s\n", m)
+				}
+			}
+			if err := setConsent(d, true); err != nil {
+				fmt.Fprintf(d.stderr, "oci-assume: warning: could not update receipt: %v\n", err)
+			}
 			out := cmd.OutOrStdout()
 			if st, err := b.Status(); err == nil {
 				fmt.Fprintf(out, "installed: %s\n", st.Path)
@@ -52,6 +61,10 @@ func newDaemon(d *deps) *cobra.Command {
 			}
 			if err := b.Uninstall(); err != nil {
 				return err
+			}
+			// Revoke consent, or self-heal would reinstall the job on the next command.
+			if err := setConsent(d, false); err != nil {
+				fmt.Fprintf(d.stderr, "oci-assume: warning: could not update receipt: %v\n", err)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "uninstalled")
 			return nil

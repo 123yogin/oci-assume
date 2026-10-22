@@ -19,7 +19,7 @@ oci-assume() {
 
 oci_assume_prompt() {
   local p
-  p="$(command oci-assume prompt 2>/dev/null)"
+  p="$(command oci-assume prompt --tick 2>/dev/null)"
   if [ -n "$p" ]; then
     printf '[oci %s]' "$p"
   fi

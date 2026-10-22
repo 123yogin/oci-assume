@@ -25,6 +25,7 @@ type Receipt struct {
 	Background *BackgroundEntry `json:"background,omitempty"`
 	OCICLI     string           `json:"ociCliInstalledBy,omitempty"`
 	LastHeal   time.Time        `json:"lastHeal,omitzero"`
+	LastCheck  time.Time        `json:"lastCheck,omitzero"` // last self-heal status check
 }
 
 // FileEntry is a file setup wrote; Kind is "block" (marked region) or "dropin" (whole file).

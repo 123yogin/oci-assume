@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/123yogin/oci-assume/internal/procattr"
 )
 
 var (
@@ -77,6 +79,7 @@ func (r *runner) Refresh(ctx context.Context, profile string) error {
 // run captures stderr and maps failures to sentinel errors.
 func (r *runner) run(ctx context.Context, args ...string) error {
 	cmd := r.command(ctx, args...)
+	procattr.Hide(cmd)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	err := cmd.Run()
@@ -110,6 +113,7 @@ func (r *runner) Authenticate(ctx context.Context, profile, region string) error
 		args = append(args, "--region", region)
 	}
 	cmd := r.command(ctx, args...)
+	procattr.HideIfNoConsole(cmd) // keep the terminal when interactive
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stderr // keep our stdout clean
 	cmd.Stderr = os.Stderr
