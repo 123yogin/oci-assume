@@ -624,7 +624,7 @@ func TestRenderRejectsControlChars(t *testing.T) {
 func TestSchtasks(t *testing.T) {
 	f := &fakeExec{}
 	s := testSys(t, f, nil)
-	w := &schtasks{s}
+	w := &schtasks{s: s}
 	if err := w.Install(testBin); err != nil {
 		t.Fatal(err)
 	}

@@ -16,6 +16,7 @@ type fakeBackend struct {
 	installs, uninstalls int
 	installBin, bin      string
 	installErr           error
+	statusCalls          int
 }
 
 func (f *fakeBackend) Install(bin string) error {
@@ -31,6 +32,7 @@ func (f *fakeBackend) Install(bin string) error {
 func (f *fakeBackend) Uninstall() error { f.uninstalls++; f.installed = false; return nil }
 
 func (f *fakeBackend) Status() (refresher.Status, error) {
+	f.statusCalls++
 	return refresher.Status{Installed: f.installed, Path: "/fake/def"}, nil
 }
 
@@ -170,5 +172,29 @@ func TestSelfHealRateLimitedOnFailure(t *testing.T) {
 	now = now.Add(2 * time.Minute)
 	if _, err := SelfHeal(e, &r, b, "/x"); err == nil || b.installs != 2 {
 		t.Fatalf("after 10m: %v %d", err, b.installs)
+	}
+}
+
+func TestSelfHealChecksAtMostEvery10Min(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	e := bgEnv(t)
+	e.Now = func() time.Time { return now }
+	r := Receipt{Background: &BackgroundEntry{Backend: "launchd", Consented: true}}
+	b := &fakeBackend{installed: true, bin: t.TempDir()}
+	for i := 0; i < 3; i++ {
+		if healed, err := SelfHeal(e, &r, b, "/x"); healed || err != nil {
+			t.Fatalf("healthy healed: %v %v", healed, err)
+		}
+		now = now.Add(3 * time.Minute)
+	}
+	if b.statusCalls != 1 || !r.LastCheck.Equal(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)) || !r.LastHeal.IsZero() {
+		t.Fatalf("status calls %d LastCheck %v LastHeal %v", b.statusCalls, r.LastCheck, r.LastHeal)
+	}
+	now = now.Add(2 * time.Minute) // 11m after the first check
+	if _, err := SelfHeal(e, &r, b, "/x"); err != nil {
+		t.Fatal(err)
+	}
+	if b.statusCalls != 2 || b.installs != 0 {
+		t.Fatalf("status calls %d installs %d", b.statusCalls, b.installs)
 	}
 }

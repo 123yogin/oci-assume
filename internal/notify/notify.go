@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/123yogin/oci-assume/internal/procattr"
 )
 
 // Notifier delivers a desktop notification.
@@ -75,6 +77,7 @@ func run(ctx context.Context, name string, args, env []string) error {
 	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // G204: runs the platform notifier by design
 	cmd.Env = append(os.Environ(), env...)
 	cmd.WaitDelay = time.Second
+	procattr.Hide(cmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s: %w: %s", name, err, strings.TrimSpace(string(out)))
 	}

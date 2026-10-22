@@ -9,19 +9,20 @@ import (
 	"github.com/123yogin/oci-assume/internal/refresher"
 )
 
-// healEvery rate-limits reinstall attempts, including failed ones.
+// healEvery rate-limits status checks and reinstall attempts, including failed ones.
 const healEvery = 10 * time.Minute
 
 // SelfHeal silently reinstalls a consented background entry that is missing or points at a deleted binary.
-// It stamps r.LastHeal on every attempt; the caller saves the receipt and logs any error.
+// It stamps r.LastCheck on every check and r.LastHeal on every attempt; the caller saves the receipt and logs errors.
 func SelfHeal(e *Env, r *Receipt, b refresher.Backend, bin string) (healed bool, err error) {
 	if r.Background == nil || !r.Background.Consented {
 		return false, nil
 	}
 	now := e.Now()
-	if !r.LastHeal.IsZero() && now.Sub(r.LastHeal) < healEvery {
+	if recent(now, r.LastCheck) || recent(now, r.LastHeal) {
 		return false, nil
 	}
+	r.LastCheck = now
 	if !needsHeal(b) {
 		return false, nil
 	}
@@ -51,4 +52,9 @@ func needsHeal(b refresher.Backend) bool {
 	}
 	_, err = os.Stat(p)
 	return errors.Is(err, fs.ErrNotExist)
+}
+
+// recent: t is set, not in the future, and less than healEvery ago.
+func recent(now, t time.Time) bool {
+	return !t.IsZero() && !now.Before(t) && now.Sub(t) < healEvery
 }

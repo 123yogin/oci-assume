@@ -353,9 +353,9 @@ func (l *lazyRunner) Authenticate(ctx context.Context, p, region string) error {
 	return r.Authenticate(ctx, p, region)
 }
 
-// healExempt commands never self-heal: prompt paths, setup itself, and trivial output.
+// healExempt commands never self-heal: prompt paths, setup/daemon (they manage the job), and trivial output.
 var healExempt = map[string]bool{"prompt": true, "init": true, "__complete": true, "setup": true,
-	"uninstall": true, "version": true, "help": true, "completion": true}
+	"uninstall": true, "version": true, "help": true, "completion": true, "daemon": true}
 
 // selfHeal reinstalls a consented background job when it is missing; errors go to the log only.
 func selfHeal(d *deps, cmd *cobra.Command) {
@@ -364,6 +364,10 @@ func selfHeal(d *deps, cmd *cobra.Command) {
 		top = top.Parent()
 	}
 	if top.HasParent() && healExempt[top.Name()] {
+		return
+	}
+	// The scheduled job and tick children run `refresh --background`; healing there is redundant.
+	if bg, err := cmd.Flags().GetBool("background"); err == nil && bg && cmd.Name() == "refresh" {
 		return
 	}
 	dir, err := state.Dir()
@@ -387,9 +391,10 @@ func selfHeal(d *deps, cmd *cobra.Command) {
 		logf(d, "self-heal: %v", err)
 		return
 	}
-	prev := r.LastHeal
+	prevHeal, prevCheck := r.LastHeal, r.LastCheck
 	_, herr := onboard.SelfHeal(&onboard.Env{GOOS: d.goos, StateDir: dir, Now: d.now}, &r, b, bin)
-	if !r.LastHeal.Equal(prev) {
+	logWarnings(d, b)
+	if !r.LastHeal.Equal(prevHeal) || !r.LastCheck.Equal(prevCheck) {
 		if err := onboard.SaveReceipt(dir, r); err != nil {
 			logf(d, "self-heal: save receipt: %v", err)
 		}
@@ -397,4 +402,34 @@ func selfHeal(d *deps, cmd *cobra.Command) {
 	if herr != nil {
 		logf(d, "self-heal: reinstall background refresh: %v", herr)
 	}
+}
+
+// logWarnings sends a backend's install warnings to the background log.
+func logWarnings(d *deps, b refresher.Backend) {
+	if w, ok := b.(refresher.Warner); ok {
+		for _, m := range w.Warnings() {
+			logf(d, "background: %s", m)
+		}
+	}
+}
+
+// setConsent records the background job's consent in the receipt (daemon install/uninstall).
+func setConsent(d *deps, consented bool) error {
+	dir, err := state.Dir()
+	if err != nil {
+		return err
+	}
+	r, err := onboard.LoadReceipt(dir)
+	if err != nil {
+		return err
+	}
+	if r.Background == nil {
+		if !consented {
+			return nil
+		}
+		r.Background = &onboard.BackgroundEntry{}
+	}
+	r.Background.Backend, r.Background.Consented = onboard.BackendName(d.goos), consented
+	r.Version = "1"
+	return onboard.SaveReceipt(dir, r)
 }

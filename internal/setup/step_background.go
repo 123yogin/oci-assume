@@ -21,8 +21,8 @@ func NewBackgroundStep() Step {
 func (*backgroundStep) ID() string     { return "background" }
 func (*backgroundStep) NeedsTTY() bool { return false }
 
-// backendName is the receipt's name for the scheduler on goos.
-func backendName(goos string) string {
+// BackendName is the receipt's name for the scheduler on goos.
+func BackendName(goos string) string {
 	switch goos {
 	case "darwin":
 		return "launchd"
@@ -88,7 +88,7 @@ func (s *backgroundStep) Apply(e *Env, r *Receipt) error {
 	if err := b.Install(bin); err != nil {
 		return err
 	}
-	r.Background = &BackgroundEntry{Backend: backendName(e.GOOS), Consented: true}
+	r.Background = &BackgroundEntry{Backend: BackendName(e.GOOS), Consented: true}
 	return nil
 }
 

@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/123yogin/oci-assume/internal/procattr"
 	"github.com/123yogin/oci-assume/internal/state"
 )
 
@@ -92,7 +93,7 @@ func ForOS(goos string) (Backend, error) {
 	case "linux":
 		return &systemd{s}, nil
 	}
-	return &schtasks{s}, nil
+	return &schtasks{s: s}, nil
 }
 
 // Render returns the scheduler files for goos (filename → content), using $PATH and the home dir.
@@ -280,6 +281,7 @@ func realExec(stdin, name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // G204: runs the platform scheduler tool by design
+	procattr.Hide(cmd)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}

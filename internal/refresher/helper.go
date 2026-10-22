@@ -8,15 +8,7 @@ import (
 // HelperName is the windowless (-H=windowsgui) build the Windows task runs, so no console flashes.
 const HelperName = "oci-assume-bg.exe"
 
-// HelperPath is BinPath, swapped for the helper when it sits next to the main binary.
-func HelperPath() (string, error) {
-	bin, err := BinPath()
-	if err != nil {
-		return "", err
-	}
-	return helperFor(bin), nil
-}
-
+// helperFor is the helper when it sits next to bin as a regular file, else bin.
 func helperFor(bin string) string {
 	h := filepath.Join(filepath.Dir(bin), HelperName)
 	if fi, err := os.Stat(h); err == nil && fi.Mode().IsRegular() {

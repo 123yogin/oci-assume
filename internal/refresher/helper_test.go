@@ -42,7 +42,7 @@ func TestTaskXMLHasLogonTriggerAndHelper(t *testing.T) {
 		}
 		return f.run(stdin, name, args...)
 	}
-	if err := (&schtasks{s}).Install(bin); err != nil {
+	if err := (&schtasks{s: s}).Install(bin); err != nil {
 		t.Fatal(err)
 	}
 	eq(t, f.calls[1:], []string{"schtasks /Run /TN " + TaskName})
@@ -61,10 +61,50 @@ func TestTaskXMLHasLogonTriggerAndHelper(t *testing.T) {
 	if got != strings.ReplaceAll(string(want), "\r\n", "\n") {
 		t.Fatalf("mismatch:\n--- got\n%s\n--- want\n%s", got, want)
 	}
-	for _, s := range []string{"<LogonTrigger>", `<UserId>CORP\dev</UserId>`, "<TimeTrigger>", HelperName + "</Command>"} {
+	for _, s := range []string{"<LogonTrigger>", "<UserId>CORP\\dev</UserId>\n      <Delay>", "<TimeTrigger>", HelperName + "</Command>"} {
 		if !strings.Contains(got, s) {
 			t.Fatalf("missing %q", s)
 		}
+	}
+}
+
+// Without USERNAME the logon trigger would need admin, so it is left out with a warning.
+func TestTaskXMLNoUserOmitsLogonTrigger(t *testing.T) {
+	f := &fakeExec{}
+	s := testSys(t, f, nil)
+	var xml string
+	s.exec = func(stdin, name string, args ...string) (string, error) {
+		if len(args) > 4 && args[0] == "/Create" {
+			b, _ := os.ReadFile(args[4])
+			xml = fromUTF16(t, b)
+		}
+		return f.run(stdin, name, args...)
+	}
+	w := &schtasks{s: s}
+	if err := w.Install(testBin); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(xml, "LogonTrigger") || !strings.Contains(xml, "<TimeTrigger>") {
+		t.Fatalf("xml:\n%s", xml)
+	}
+	var wr Warner = w
+	if ws := wr.Warnings(); len(ws) != 1 || !strings.Contains(ws[0], "USERNAME") {
+		t.Fatalf("warnings %v", ws)
+	}
+}
+
+func TestSchtasksInstalledBinUTF16(t *testing.T) {
+	xml := "<Task><Exec><Command>C:\\Program Files\\oci-assume-bg.exe</Command></Exec></Task>"
+	f := &fakeExec{rules: []rule{{"schtasks /Query", string(utf16le(xml)), nil}}}
+	w := &schtasks{s: testSys(t, f, nil)}
+	if got, err := w.InstalledBin(); err != nil || got != `C:\Program Files\oci-assume-bg.exe` {
+		t.Fatalf("got %q %v", got, err)
+	}
+	// Undecodable bytes read as unknown, never as a missing binary.
+	garbled := string(utf16le("<Command>C:\\")) + "\x00\xd8" + string(utf16le("x</Command>")[2:]) // lone surrogate
+	f.rules = []rule{{"schtasks /Query", garbled, nil}}
+	if got, err := w.InstalledBin(); err == nil {
+		t.Fatalf("garbled path accepted: %q", got)
 	}
 }
 
@@ -87,9 +127,6 @@ func TestHelperPathResolution(t *testing.T) {
 	}
 	if got := helperFor(filepath.Join(other, "oci-assume.exe")); got != filepath.Join(other, "oci-assume.exe") {
 		t.Fatalf("dir used as helper: %s", got)
-	}
-	if p, err := HelperPath(); err != nil || p == "" {
-		t.Fatalf("HelperPath: %q %v", p, err)
 	}
 }
 
@@ -135,7 +172,7 @@ func TestInstalledBin(t *testing.T) {
 	t.Run("schtasks", func(t *testing.T) {
 		out := "<Task><Actions><Exec><Command>C:\\a &amp; b\\oci-assume-bg.exe</Command></Exec></Actions></Task>"
 		f := &fakeExec{rules: []rule{{"schtasks /Query", out, nil}}}
-		w := &schtasks{testSys(t, f, nil)}
+		w := &schtasks{s: testSys(t, f, nil)}
 		if got, err := w.InstalledBin(); err != nil || got != `C:\a & b\oci-assume-bg.exe` {
 			t.Fatalf("got %q %v", got, err)
 		}

@@ -56,7 +56,11 @@ func tick(d *deps, profile string) {
 
 func fresh(d *deps, stamp string) bool {
 	fi, err := os.Stat(stamp)
-	return err == nil && d.now().Sub(fi.ModTime()) < tickEvery
+	if err != nil {
+		return false
+	}
+	now := d.now()
+	return !now.Before(fi.ModTime()) && now.Sub(fi.ModTime()) < tickEvery // a future mtime is stale
 }
 
 func touch(path string, now time.Time) error {

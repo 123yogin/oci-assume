@@ -7,7 +7,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf16"
+	"unicode/utf8"
 )
+
+// Warner is implemented by backends whose Install can succeed with caveats worth logging.
+type Warner interface {
+	Warnings() []string
+}
 
 // BinReporter is implemented by backends that can read the binary path from their installed definition.
 type BinReporter interface {
@@ -140,9 +147,26 @@ func (w *schtasks) InstalledBin() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	m := commandRe.FindStringSubmatch(strings.ReplaceAll(out, "\x00", ""))
-	if m == nil {
-		return "", ErrNoDefinition
+	m := commandRe.FindStringSubmatch(decodeXMLOutput(out))
+	if m == nil || strings.ContainsRune(m[1], utf8.RuneError) {
+		return "", ErrNoDefinition // unknown, so self-heal leaves the task alone
 	}
 	return html.UnescapeString(strings.TrimSpace(m[1])), nil
+}
+
+// decodeXMLOutput decodes UTF-16LE (a BOM or NULs present), else returns out unchanged.
+func decodeXMLOutput(out string) string {
+	b := []byte(out)
+	bom := len(b) >= 2 && b[0] == 0xFF && b[1] == 0xFE
+	if !bom && !strings.ContainsRune(out, 0) {
+		return out
+	}
+	if bom {
+		b = b[2:]
+	}
+	u := make([]uint16, 0, len(b)/2)
+	for i := 0; i+1 < len(b); i += 2 {
+		u = append(u, uint16(b[i])|uint16(b[i+1])<<8)
+	}
+	return string(utf16.Decode(u))
 }
