@@ -87,6 +87,8 @@ scoops:
     homepage: https://github.com/123yogin/oci-assume
     description: Switch OCI CLI session-token profiles like Granted's assume
     license: Apache-2.0
+    # Paused: the release token can't write to scoop-bucket yet; flip to false to publish.
+    skip_upload: true
     # Scoop has no notes field; post_install is the supported way to print one.
     post_install:
       - Write-Host 'Run `oci-assume setup` to finish installing.'

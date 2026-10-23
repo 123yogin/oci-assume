@@ -14,15 +14,18 @@ on:
         default: all
         type: choice
         options: [all, script, brew, scoop, go]
-  release:
-    types: [published]
+  # Releases are created with GITHUB_TOKEN, which can't trigger `release` events, so chain on the run.
+  workflow_run:
+    workflows: [release]
+    types: [completed]
 
 permissions:
   contents: read
 
-# A release event has no inputs, so `inputs.channel || 'all'` tests every channel.
+# A workflow_run event has no inputs, so `inputs.channel || 'all'` tests every channel.
 jobs:
   resolve:
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v'))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -31,7 +34,7 @@ jobs:
       - id: tag
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event.workflow_run.head_branch }}
           INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
@@ -202,7 +205,8 @@ jobs:
 
   scoop:
     needs: resolve
-    if: contains(fromJSON('["all","scoop"]'), inputs.channel || 'all')
+    # Scoop publishing is paused, so this runs only when asked for explicitly.
+    if: inputs.channel == 'scoop'
     name: scoop windows-2022
     runs-on: windows-2022
     timeout-minutes: 30
