@@ -25,7 +25,7 @@ permissions:
 # A workflow_run event has no inputs, so `inputs.channel || 'all'` tests every channel.
 jobs:
   resolve:
-    if: github.event_name != 'workflow_run' || startsWith(github.event.workflow_run.head_branch, 'v')
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v'))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -205,7 +205,8 @@ jobs:
 
   scoop:
     needs: resolve
-    if: contains(fromJSON('["all","scoop"]'), inputs.channel || 'all')
+    # Scoop publishing is paused, so this runs only when asked for explicitly.
+    if: inputs.channel == 'scoop'
     name: scoop windows-2022
     runs-on: windows-2022
     timeout-minutes: 30
