@@ -186,6 +186,10 @@ func completeProfile(_ *cobra.Command, args []string, prefix string) ([]string, 
 	ps, _ := ociconfig.Load(ociconfig.DefaultPath())
 	var out []string
 	for _, p := range ps {
+		// Skip names assume would reject, and ones that read as flags.
+		if shell.Validate(shell.Env{Profile: p.Name}) != nil || strings.HasPrefix(p.Name, "-") {
+			continue
+		}
 		if strings.HasPrefix(p.Name, prefix) {
 			out = append(out, p.Name)
 		}
