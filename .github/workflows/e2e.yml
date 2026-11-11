@@ -56,7 +56,7 @@ jobs:
       fail-fast: false
       matrix:
         # macos-13 is retired; macos-15-intel is GitHub's remaining Intel macOS image.
-        os: [macos-14, macos-15-intel, ubuntu-24.04]
+        os: [macos-15, macos-15-intel, ubuntu-24.04]
     env:
       E2E_VERSION: ${{ needs.resolve.outputs.tag }}
       E2E_FAKE_SRC: ${{ github.workspace }}/tagsrc
@@ -159,8 +159,8 @@ jobs:
   brew:
     needs: resolve
     if: contains(fromJSON('["all","brew"]'), inputs.channel || 'all')
-    name: brew macos-14
-    runs-on: macos-14
+    name: brew macos-15
+    runs-on: macos-15
     timeout-minutes: 30
     env:
       # The tap carries only the newest cask, so this matches the tag only when testing the latest release.
@@ -244,7 +244,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, ubuntu-24.04, windows-2022]
+        os: [macos-15, ubuntu-24.04, windows-2022]
     env:
       E2E_VERSION: ${{ needs.resolve.outputs.tag }}
     steps:
