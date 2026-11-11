@@ -50,7 +50,7 @@ Then open a new terminal and run `oci-assume`. Re-running `oci-assume setup` is 
 ## Use it
 
 ```sh
-oci-assume                    # pick a profile from the list (or: oci-assume dev)
+oci-assume                    # pick a profile, then a region (or: oci-assume dev)
 oci iam region list           # no --profile, no --auth
 ```
 
@@ -76,15 +76,16 @@ Sessions stay fresh in the background; you only log in through the browser again
 
 | Command | What it does |
 |---|---|
-| `oci-assume [profile]` | Pick a profile (or name one), make sure its session is valid, and set the OCI variables in this shell. |
-| `oci-assume -r <region> [profile]` | Same, overriding the profile's region. |
+| `oci-assume [profile]` | Pick a profile (or name one), make sure its session is valid, and set the OCI variables in this shell. After the picker, a region step lists the profile's own region first (`● default`; Enter keeps it), then regions from your other profiles and `$OCI_CLI_REGION`, then every OCI commercial region. Type to filter; Esc cancels. A named profile skips it. |
+| `oci-assume -r <region> [profile]` | Same, overriding the profile's region and skipping the region step. Tab completes the region (`-r us-<Tab>`). |
+| `oci-assume -R <profile>` | Show the region step for a named profile too (`--pick-region`). Needs a terminal (exit 4 without one). Tab completes profile names. |
 | `oci-assume --unset` | Clear `OCI_CLI_PROFILE`, `OCI_CLI_AUTH` and `OCI_CLI_REGION`. |
 | `eval "$(oci-assume --shell bash <profile>)"` | Use from a script, without the hook. `--shell` takes `zsh`, `bash`, `fish` or `pwsh`. |
-| `oci-assume status [--json]` | Show every profile's region and session expiry. |
+| `oci-assume status [--json]` | Show every profile's region and session expiry. An overridden region on the active profile shows as `us-phoenix-1 (override)`. |
 | `oci-assume refresh [profile]` | Refresh a session. Defaults to `$OCI_CLI_PROFILE`. |
 | `oci-assume refresh --all [--background]` | Refresh every profile assumed in the last 24 hours. `--background` never opens a browser; it sends a notification instead. |
 | `oci-assume login <profile>` | Force a browser login (`oci session authenticate`). |
-| `oci-assume prompt [--json]` | Print the active profile and time left, for shell prompts. |
+| `oci-assume prompt [--json]` | Print the active profile and time left, for shell prompts, with the region when it is overridden (`prodcorp us-phoenix-1 52m`). |
 | `oci-assume setup [--yes] [--dry-run]` | Install the OCI CLI, shell hook and background refresh, then log in. Asks before each step. |
 | `oci-assume uninstall [--purge]` | Undo everything `setup` changed. `--purge` also deletes the state directory and log. |
 | `oci-assume daemon install\|uninstall\|status` | Manage the background refresh job by hand (every 30 minutes). |

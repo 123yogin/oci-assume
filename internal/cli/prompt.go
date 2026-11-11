@@ -16,6 +16,7 @@ type promptJSON struct {
 	Profile          string `json:"profile"`
 	Text             string `json:"text"`
 	State            string `json:"state"`
+	Region           string `json:"region"`
 	RemainingSeconds int64  `json:"remaining_seconds"`
 }
 
@@ -49,11 +50,16 @@ func newPrompt(d *deps) *cobra.Command {
 			if !p.IsSession() {
 				warn, rem = -1, 0
 			}
-			text, st := shell.Prompt(p.Name, rem, warn)
+			override := activeOverride(p)
+			text, st := shell.Prompt(p.Name, override, rem, warn)
+			region := p.Region
+			if override != "" {
+				region = override
+			}
 			out := cmd.OutOrStdout()
 			var werr error
 			if asJSON {
-				werr = json.NewEncoder(out).Encode(promptJSON{p.Name, text, string(st), int64(rem / time.Second)})
+				werr = json.NewEncoder(out).Encode(promptJSON{p.Name, text, string(st), region, int64(rem / time.Second)})
 			} else {
 				fmt.Fprintln(out, text)
 			}

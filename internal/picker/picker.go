@@ -21,8 +21,8 @@ import (
 )
 
 var (
-	ErrNoTTY     = errors.New("no terminal available for the profile picker")
-	ErrCancelled = errors.New("profile selection cancelled")
+	ErrNoTTY     = errors.New("no terminal available for the picker")
+	ErrCancelled = errors.New("selection cancelled")
 	// ErrNewProfile means the user chose the "+ New profile…" row.
 	ErrNewProfile = errors.New("new profile requested")
 )
@@ -90,14 +90,39 @@ func colorEnabled() bool {
 	return t != "dumb" && (t != "" || runtime.GOOS == "windows")
 }
 
+// RegionItem is one row of the region step.
+type RegionItem struct {
+	Region  string // "" is the "(none)" row of a profile without a region
+	Default bool   // the profile's configured region
+}
+
+// typeahead holds keys read past a choice, so the next picker in this process gets them.
+var typeahead struct {
+	keys    []keyEvent
+	pending []byte
+}
+
 // Pick shows the picker inline on the controlling terminal, never stdout,
 // and returns the chosen profile name.
-func Pick(items []Item, in *os.File) (name string, err error) {
-	if in == nil || !isTerminal(in) {
-		return "", ErrNoTTY
-	}
+func Pick(items []Item, in *os.File) (string, error) {
 	if len(items) == 0 {
 		return "", errors.New("no profiles to pick from")
+	}
+	return run(in, func() model { return newModel(items, colorEnabled()) })
+}
+
+// PickRegion shows the region step for profile and returns the chosen region, in the given order.
+func PickRegion(profile string, items []RegionItem, in *os.File) (string, error) {
+	if len(items) == 0 {
+		return "", errors.New("no regions to pick from")
+	}
+	return run(in, func() model { return newRegionModel(profile, items, colorEnabled()) })
+}
+
+// run draws the model on the terminal until a choice or cancel.
+func run(in *os.File, mk func() model) (name string, err error) {
+	if in == nil || !isTerminal(in) {
+		return "", ErrNoTTY
 	}
 	c, err := openTTY()
 	if err != nil {
@@ -107,7 +132,7 @@ func Pick(items []Item, in *os.File) (name string, err error) {
 	stop := func() {}
 	defer func() {
 		if r := recover(); r != nil {
-			name, err = "", fmt.Errorf("profile picker crashed: %v", r)
+			name, err = "", fmt.Errorf("picker crashed: %v", r)
 		}
 		s.clear()
 		_ = c.Close()
@@ -115,7 +140,7 @@ func Pick(items []Item, in *os.File) (name string, err error) {
 	}()
 	var sigs <-chan os.Signal
 	sigs, stop = notify()
-	s.m = newModel(items, colorEnabled())
+	s.m = mk()
 	return s.run(sigs)
 }
 
@@ -130,7 +155,14 @@ func (s *screen) run(sigs <-chan os.Signal) (string, error) {
 	s.fit()
 	s.draw()
 	buf := make([]byte, 256)
-	var pending []byte
+	carried, pending := typeahead.keys, typeahead.pending
+	typeahead.keys, typeahead.pending = nil, nil
+	if len(carried) > 0 {
+		if done, name, err := s.apply(carried, pending); done {
+			return name, err
+		}
+		s.draw()
+	}
 	for {
 		select {
 		case sig := <-sigs:
@@ -151,22 +183,31 @@ func (s *screen) run(sigs <-chan os.Signal) (string, error) {
 		} else if keys, pending = feed(pending, buf[:n]); !s.c.Polls() && len(pending) == 1 && pending[0] == 0x1b {
 			keys, pending = append(keys, flush(pending)...), nil // no timeout will come to flush it
 		}
-		for _, k := range keys {
-			if s.m.update(k) {
-				if s.m.cancelled {
-					return "", ErrCancelled
-				}
-				if s.m.newProfile {
-					return "", ErrNewProfile
-				}
-				return s.m.choice, nil
-			}
-			dirty = true
+		if done, name, err := s.apply(keys, pending); done {
+			return name, err
 		}
-		if dirty {
+		if dirty || len(keys) > 0 {
 			s.draw()
 		}
 	}
+}
+
+// apply feeds keys to the model; on a choice, the unused keys and pending bytes carry over.
+func (s *screen) apply(keys []keyEvent, pending []byte) (done bool, name string, err error) {
+	for i, k := range keys {
+		if !s.m.update(k) {
+			continue
+		}
+		switch {
+		case s.m.cancelled:
+			return true, "", ErrCancelled
+		case s.m.newProfile:
+			return true, "", ErrNewProfile
+		}
+		typeahead.keys, typeahead.pending = append([]keyEvent(nil), keys[i+1:]...), pending
+		return true, s.m.choice, nil
+	}
+	return false, "", nil
 }
 
 // fit picks up a terminal resize and reports whether it changed.

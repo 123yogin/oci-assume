@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -218,12 +219,69 @@ func TestPickerSelectsOnRealPty(t *testing.T) {
 	if _, err := f.Write([]byte("\r")); err != nil {
 		t.Fatal(err)
 	}
+	// The region step follows on the same terminal; filter to one region and take it.
+	waitFor(t, buf, "Select a region for DEFAULT")
+	if _, err := f.Write([]byte("fra\r")); err != nil {
+		t.Fatal(err)
+	}
 	if err := finish(t, cmd, buf, 3*time.Second); err != nil {
 		t.Fatalf("exit %v; output %q", err, buf.String())
 	}
 	out := buf.String()
-	cleared(t, out, 7)
+	if !strings.Contains(out, "\r\x1b[6A\x1b[J\x1b[?25h") {
+		t.Errorf("profile frame not cleared: %q", out)
+	}
+	cleared(t, out, 14) // title, filter, header, 10 rows, footer
 	if i := strings.Index(out, "OCI_CLI_PROFILE='DEFAULT'"); i < strings.LastIndex(out, "\x1b[J") {
 		t.Errorf("export missing or before the clear: %q", out)
+	}
+	if !strings.Contains(out, "OCI_CLI_REGION='eu-frankfurt-1'") {
+		t.Errorf("region override not exported: %q", out)
+	}
+}
+
+func TestRegionStepEscCancelsOnRealPty(t *testing.T) {
+	bin, env := build(t), testEnv(t)
+	cmd, f, buf := start(t, bin, env, "--shell", "zsh")
+	waitFor(t, buf, "esc cancel")
+	if _, err := f.Write([]byte("\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, buf, "Select a region for DEFAULT")
+	if _, err := f.Write([]byte{0x1b}); err != nil {
+		t.Fatal(err)
+	}
+	var ee *exec.ExitError
+	if err := finish(t, cmd, buf, 3*time.Second); !errors.As(err, &ee) || ee.ExitCode() != 1 {
+		t.Fatalf("esc should exit 1, got %v", err)
+	}
+	if out := buf.String(); strings.Contains(out, "export ") {
+		t.Errorf("cancelled region step exported: %q", out)
+	}
+}
+
+// Keys typed ahead of the region step, in one write, still reach it.
+func TestTypeaheadReachesRegionStepOnRealPty(t *testing.T) {
+	bin, env := build(t), testEnv(t)
+	var cfg string
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, "OCI_CLI_CONFIG_FILE="); ok {
+			cfg = v
+		}
+	}
+	pl := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"exp":%d}`, time.Now().Add(time.Hour).Unix())))
+	if err := os.WriteFile(filepath.Join(filepath.Dir(cfg), "tok"), []byte("aGVhZA."+pl+".c2ln"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd, f, buf := start(t, bin, env, "--shell", "zsh")
+	waitFor(t, buf, "esc cancel")
+	if _, err := f.Write([]byte("dev\r\r")); err != nil {
+		t.Fatal(err)
+	}
+	if err := finish(t, cmd, buf, 3*time.Second); err != nil {
+		t.Fatalf("exit %v; output %q", err, buf.String())
+	}
+	if out := buf.String(); !strings.Contains(out, "OCI_CLI_PROFILE='dev'") || !strings.Contains(out, "OCI_CLI_REGION='us-phoenix-1'") {
+		t.Errorf("typeahead lost: %q", out)
 	}
 }

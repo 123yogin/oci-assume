@@ -51,8 +51,10 @@ type deps struct {
 	stderr    io.Writer
 	isTTY     func() bool
 	pick      func([]picker.Item, *os.File) (string, error)
-	notifier  notifier
-	goos      string
+	// pickRegion runs the region step for a profile.
+	pickRegion func(profile string, items []picker.RegionItem, in *os.File) (string, error)
+	notifier   notifier
+	goos       string
 	// scheduler, binPath and ociVersion back the daemon and doctor commands.
 	scheduler  func(goos string) (refresher.Backend, error)
 	binPath    func() (string, error)
@@ -74,6 +76,7 @@ func defaultDeps() *deps {
 		stderr:     os.Stderr,
 		isTTY:      func() bool { return term.IsTerminal(int(os.Stdin.Fd())) },
 		pick:       picker.Pick,
+		pickRegion: picker.PickRegion,
 		notifier:   notify.New(),
 		goos:       runtime.GOOS,
 		scheduler:  refresher.ForOS,
@@ -157,18 +160,19 @@ func exitCode(err error) int {
 
 type flags struct {
 	region, threshold, loginTimeout, shell string
-	unset                                  bool
+	unset, pickRegion                      bool
 }
 
 func newRoot(d *deps) *cobra.Command {
 	f := &flags{}
 	root := &cobra.Command{
-		Use:           "oci-assume [profile]",
-		Short:         "Switch OCI CLI profiles and keep session tokens fresh",
-		Args:          cobra.MaximumNArgs(1),
-		SilenceErrors: true,
-		SilenceUsage:  true,
-		Version:       versionString(),
+		Use:               "oci-assume [profile]",
+		Short:             "Switch OCI CLI profiles and keep session tokens fresh",
+		Args:              cobra.MaximumNArgs(1),
+		SilenceErrors:     true,
+		SilenceUsage:      true,
+		Version:           versionString(),
+		ValidArgsFunction: completeProfile,
 		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
 			selfHeal(d, cmd)
 		},
@@ -193,7 +197,9 @@ func newRoot(d *deps) *cobra.Command {
 	pf.StringVarP(&f.region, "region", "r", "", "override the profile's region")
 	pf.StringVar(&f.threshold, "threshold", "", "refresh when less than this remains (default 10m, env OCI_ASSUME_THRESHOLD)")
 	pf.StringVar(&f.loginTimeout, "login-timeout", "5m", "how long to wait for browser login")
+	_ = root.RegisterFlagCompletionFunc("region", completeRegion)
 	root.Flags().BoolVar(&f.unset, "unset", false, "emit lines that clear the OCI variables")
+	root.Flags().BoolVarP(&f.pickRegion, "pick-region", "R", false, "choose the region interactively, even for a named profile")
 	root.Flags().StringVar(&f.shell, "shell", "", `print exports for zsh|bash|fish|pwsh without the hook, e.g. eval "$(oci-assume --shell bash dev)"`)
 
 	root.AddCommand(newStatus(d), newRefresh(d, f), newLogin(d, f), newPrompt(d), newInit(), newVersion(),
