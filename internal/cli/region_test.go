@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -140,6 +141,20 @@ func TestProfileCompletion(t *testing.T) {
 	e.run("__complete", "d")
 	if out := e.stdout.String(); !strings.Contains(out, "dev\n") || !strings.Contains(out, "daemon") {
 		t.Fatalf("bare completion %q", out)
+	}
+}
+
+func TestProfileCompletionSkipsUnusableNames(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "config")
+	body := "[good]\nregion=us-ashburn-1\n[g\tab]\n[-rf]\n[good two]\n"
+	if err := os.WriteFile(cfg, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OCI_CLI_CONFIG_FILE", cfg)
+	got, _ := completeProfile(nil, nil, "")
+	want := []string{"good", "good two"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("completion %q, want %q", got, want)
 	}
 }
 

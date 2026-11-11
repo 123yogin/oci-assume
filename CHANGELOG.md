@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-11
+
+### Fixed
+
+- Profile-name completion no longer offers names that `oci-assume` would reject (control characters) or that read as flags.
+
 ## [1.2.0] - 2026-11-11
 
 ### Added
