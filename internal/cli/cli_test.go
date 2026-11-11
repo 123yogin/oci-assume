@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,7 +48,12 @@ type env struct {
 	runners  int
 	pickName string
 	picked   []picker.Item
-	goos     string
+	// region step fake: regionName "" picks the default row; regionItems is nil when it never ran.
+	regionName  string
+	regionErr   error
+	regionFor   string
+	regionItems []picker.RegionItem
+	goos        string
 	// backend replaces the OS scheduler unless realScheduler is set.
 	backend       *fakeBackend
 	realScheduler bool
@@ -108,6 +114,7 @@ func (e *env) deps() *deps {
 		d.goos = e.goos
 	}
 	d.pick = func(items []picker.Item, _ *os.File) (string, error) { e.picked = items; return e.pickName, nil }
+	d.pickRegion = e.pickRegion
 	if !e.realScheduler {
 		d.scheduler = func(string) (refresher.Backend, error) { return e.backend, nil }
 	}
@@ -117,6 +124,19 @@ func (e *env) deps() *deps {
 	inner := d.newRunner
 	d.newRunner = func() (ocicli.Runner, error) { e.runners++; return inner() }
 	return d
+}
+
+func (e *env) pickRegion(profile string, items []picker.RegionItem, _ *os.File) (string, error) {
+	e.regionFor, e.regionItems = profile, items
+	if e.regionErr != nil || e.regionName != "" {
+		return e.regionName, e.regionErr
+	}
+	for _, it := range items {
+		if it.Default {
+			return it.Region, nil
+		}
+	}
+	return "", errors.New("no default row")
 }
 
 func (e *env) run(args ...string) int {

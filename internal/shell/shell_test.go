@@ -184,13 +184,22 @@ func TestPrompt(t *testing.T) {
 		{0, -1, "dev", StateOK},
 	}
 	for _, c := range cases {
-		txt, st := Prompt("dev", c.rem, c.warn)
+		txt, st := Prompt("dev", "", c.rem, c.warn)
 		if txt != c.text || st != c.st {
 			t.Errorf("Prompt(%v,%v) = %q,%q want %q,%q", c.rem, c.warn, txt, st, c.text, c.st)
 		}
 	}
-	if txt, st := Prompt("", time.Hour, m); txt != "" || st != "" {
+	if txt, st := Prompt("", "", time.Hour, m); txt != "" || st != "" {
 		t.Errorf("empty profile: %q %q", txt, st)
+	}
+}
+
+func TestPromptRegionOverride(t *testing.T) {
+	if txt, st := Prompt("prodcorp", "us-phoenix-1", 52*time.Minute, 10*time.Minute); txt != "prodcorp us-phoenix-1 52m" || st != StateOK {
+		t.Errorf("session: %q %q", txt, st)
+	}
+	if txt, _ := Prompt("prod-admin", "us-phoenix-1", 0, -1); txt != "prod-admin us-phoenix-1" {
+		t.Errorf("api-key: %q", txt)
 	}
 }
 

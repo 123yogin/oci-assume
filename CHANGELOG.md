@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-11
+
+### Added
+
+- Region step: after you pick a profile, a second picker offers the profile's own region (`● default`, Enter keeps it), then regions from your other profiles and `$OCI_CLI_REGION`, then every OCI commercial region. Type to filter; Esc cancels the assume. Skipped with `-r`, a named profile, no terminal, or a new profile.
+- `-R`/`--pick-region` shows the region step for a named profile; without a terminal it exits 4.
+- Tab completion for `-r`/`--region`, config regions first. It never runs `oci`.
+- `prompt` shows an overridden region (`prodcorp us-phoenix-1 52m`), and `prompt --json` has a `region` field.
+- `status` marks an overridden region on the active profile (`us-phoenix-1 (override)`); `status --json` adds `region_override`.
+
+### Changed
+
+- Cancelling a picker now reports `selection cancelled` instead of `profile selection cancelled`.
+
 ## [1.1.1] - 2026-10-23
 
 ### Fixed
@@ -56,7 +70,8 @@ One-command onboarding: install, then everything else is `oci-assume setup`.
 - Refusal to use token or key files readable by other users.
 - Releases for macOS, Linux and Windows (amd64 and arm64) through GitHub Releases, Homebrew, Scoop, winget manifests, `.deb`/`.rpm` and `install.sh`, with cosign-signed checksums and SBOMs.
 
-[Unreleased]: https://github.com/123yogin/oci-assume/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/123yogin/oci-assume/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/123yogin/oci-assume/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/123yogin/oci-assume/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/123yogin/oci-assume/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/123yogin/oci-assume/releases/tag/v1.0.0

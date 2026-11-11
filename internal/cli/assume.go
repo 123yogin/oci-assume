@@ -8,9 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/123yogin/oci-assume/internal/ensure"
 	"github.com/123yogin/oci-assume/internal/ociconfig"
 	"github.com/123yogin/oci-assume/internal/picker"
+	"github.com/123yogin/oci-assume/internal/regions"
 	onboard "github.com/123yogin/oci-assume/internal/setup"
 	"github.com/123yogin/oci-assume/internal/shell"
 	"github.com/123yogin/oci-assume/internal/state"
@@ -38,20 +41,29 @@ func runAssume(ctx context.Context, d *deps, f *flags, args []string) error {
 	if err != nil {
 		return err
 	}
+	if f.pickRegion && f.region != "" {
+		return cfgErrorf("use either -R/--pick-region or -r/--region, not both")
+	}
+	if f.pickRegion && !d.isTTY() {
+		return cfgErrorf("-R/--pick-region needs a terminal; pass -r <region> instead")
+	}
 	ps, err := loadProfiles()
-	name := ""
+	name, fresh := "", false
+	// The region step follows the picker, never a named profile (scripts must not block), unless -R.
+	regionStep := f.pickRegion
 	switch {
 	case err != nil && (len(args) == 1 || !errors.Is(err, ociconfig.ErrNotFound)):
 		return err
 	case len(args) == 1:
 		name = args[0]
 	default:
-		if name, err = pickOrLogin(ctx, d, ps, err, loginTimeout); err != nil {
+		if name, fresh, err = pickOrLogin(ctx, d, ps, err, loginTimeout); err != nil {
 			return err
 		}
 		if ps, err = loadProfiles(); err != nil {
 			return err
 		}
+		regionStep = regionStep || (!fresh && f.region == "" && d.isTTY())
 	}
 	p, err := findProfile(ps, name)
 	if err != nil {
@@ -59,6 +71,10 @@ func runAssume(ctx context.Context, d *deps, f *flags, args []string) error {
 	}
 	if f.region != "" {
 		p.Region = f.region
+	} else if regionStep {
+		if p.Region, err = chooseRegion(d, ps, p); err != nil {
+			return err
+		}
 	}
 	env := shell.Env{Profile: p.Name, Region: p.Region, Session: p.IsSession()}
 	if err := shell.Validate(env); err != nil {
@@ -90,25 +106,79 @@ func runAssume(ctx context.Context, d *deps, f *flags, args []string) error {
 
 // pickOrLogin offers the first login when there are no profiles at all, else runs the picker.
 // loadErr is a missing-config error, kept for when the login is declined or impossible.
-func pickOrLogin(ctx context.Context, d *deps, ps []ociconfig.Profile, loadErr error, timeout time.Duration) (string, error) {
+// fresh reports a profile just created by the login flow, which already asked for its region.
+func pickOrLogin(ctx context.Context, d *deps, ps []ociconfig.Profile, loadErr error, timeout time.Duration) (name string, fresh bool, err error) {
 	if d.isTTY() && len(ps) == 0 {
 		fmt.Fprint(d.stderr, "oci-assume: no OCI profiles found → create a session profile now? [Y/n] ")
 		ok, err := yes(ctx, d.stdin)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		if ok {
-			return newProfile(ctx, d, timeout)
+			name, err = newProfile(ctx, d, timeout)
+			return name, true, err
 		}
 	}
 	if loadErr != nil {
-		return "", loadErr
+		return "", false, loadErr
 	}
-	name, err := choose(d, ps)
+	name, err = choose(d, ps)
 	if errors.Is(err, picker.ErrNewProfile) {
-		return newProfile(ctx, d, timeout)
+		name, err = newProfile(ctx, d, timeout)
+		return name, true, err
 	}
-	return name, err
+	return name, false, err
+}
+
+// chooseRegion runs the region step; the default row returns the profile's own region.
+func chooseRegion(d *deps, ps []ociconfig.Profile, p ociconfig.Profile) (string, error) {
+	names := candidateRegions(ps, p.Region)
+	items := make([]picker.RegionItem, len(names))
+	for i, r := range names {
+		items[i] = picker.RegionItem{Region: r, Default: r == p.Region}
+	}
+	r, err := d.pickRegion(p.Name, items, d.stdin)
+	if errors.Is(err, picker.ErrNoTTY) {
+		return "", asConfig(err)
+	}
+	return r, err
+}
+
+// candidateRegions is own, then config regions, then $OCI_CLI_REGION, then the built-ins; invalid names are dropped.
+func candidateRegions(ps []ociconfig.Profile, own string) []string {
+	names := []string{own}
+	for _, q := range ps {
+		names = append(names, q.Region)
+	}
+	names = append(names, os.Getenv("OCI_CLI_REGION"))
+	valid := names[:0]
+	for _, r := range names {
+		if shell.Validate(shell.Env{Region: r}) == nil {
+			valid = append(valid, r)
+		}
+	}
+	return regions.Merge(valid, regions.Known)
+}
+
+// completeRegion completes -r/--region from the same list as the region step; it never runs oci.
+func completeRegion(_ *cobra.Command, _ []string, prefix string) ([]string, cobra.ShellCompDirective) {
+	ps, _ := ociconfig.Load(ociconfig.DefaultPath())
+	var out []string
+	for _, r := range candidateRegions(ps, "") {
+		if strings.HasPrefix(r, prefix) {
+			out = append(out, r)
+		}
+	}
+	return out, cobra.ShellCompDirectiveNoFileComp
+}
+
+// activeOverride is $OCI_CLI_REGION when it is valid and differs from p's own region, else "".
+func activeOverride(p ociconfig.Profile) string {
+	r := os.Getenv("OCI_CLI_REGION")
+	if r == p.Region || shell.Validate(shell.Env{Region: r}) != nil {
+		return ""
+	}
+	return r
 }
 
 // yes reads a [Y/n] answer; Enter is yes, EOF is no, and Ctrl-C returns ctx.Err().

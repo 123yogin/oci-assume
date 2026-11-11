@@ -17,6 +17,7 @@ import (
 type statusRow struct {
 	Profile          string `json:"profile"`
 	Region           string `json:"region"`
+	RegionOverride   string `json:"region_override,omitempty"` // active profile only
 	Session          bool   `json:"session"`
 	Expires          string `json:"expires"`
 	RemainingSeconds int64  `json:"remaining_seconds"`
@@ -39,6 +40,9 @@ func newStatus(d *deps) *cobra.Command {
 			rows := make([]statusRow, 0, len(ps))
 			for _, p := range ps {
 				r := statusRow{Profile: p.Name, Region: p.Region, Session: p.IsSession(), Active: p.Name == active}
+				if r.Active {
+					r.RegionOverride = activeOverride(p)
+				}
 				if p.IsSession() {
 					info, err := token.Read(p.SecurityTokenFile, now)
 					if errors.Is(err, token.ErrInsecurePerms) {
@@ -64,6 +68,9 @@ func newStatus(d *deps) *cobra.Command {
 				region := r.Region
 				if region == "" {
 					region = "-"
+				}
+				if r.RegionOverride != "" {
+					region = r.RegionOverride + " (override)"
 				}
 				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.Profile, region, rowExpires(r), rowState(r, reserved))
 			}

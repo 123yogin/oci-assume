@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/sahilm/fuzzy"
 
+	"github.com/123yogin/oci-assume/internal/ociconfig"
 	"github.com/123yogin/oci-assume/internal/shell"
 )
 
@@ -16,6 +17,8 @@ const (
 	title       = "Select an OCI profile"
 	placeholder = "type to filter"
 	noMatches   = "no matching profiles"
+	noRegions   = "no matching regions"
+	defaultTag  = "default"
 	newLabel    = "+ New profile…"
 	maxRows     = 10
 	gutter      = 3 // cursor, active marker, space
@@ -56,6 +59,8 @@ type model struct {
 	regionW int
 	statusW int
 	color   bool
+	title   string
+	regions bool // the region step: one REGION column, given order kept
 
 	choice     string
 	cancelled  bool
@@ -66,7 +71,7 @@ type model struct {
 func newModel(items []Item, color bool) model {
 	sorted := append([]Item(nil), items...)
 	Sort(sorted)
-	m := model{items: sorted, color: color, nameW: len("PROFILE"), regionW: len("REGION"), statusW: len("SESSION")}
+	m := model{items: sorted, color: color, title: title, nameW: len("PROFILE"), regionW: len("REGION"), statusW: len("SESSION")}
 	for _, it := range sorted {
 		if it.New {
 			m.text = append(m.text, "") // never fuzzy-matched; filter keeps it last
@@ -76,6 +81,21 @@ func newModel(items []Item, color bool) model {
 		m.nameW = max(m.nameW, ansi.StringWidth(it.Profile.Name))
 		m.regionW = max(m.regionW, ansi.StringWidth(region(it)))
 		m.statusW = max(m.statusW, ansi.StringWidth(status(it)))
+	}
+	m.filter()
+	return m
+}
+
+// newRegionModel reuses the profile rows: Name is the region and Active marks the default.
+func newRegionModel(profile string, items []RegionItem, color bool) model {
+	m := model{color: color, title: "Select a region for " + profile, regions: true, nameW: len("REGION")}
+	for _, r := range items {
+		m.items = append(m.items, Item{Profile: ociconfig.Profile{Name: r.Region}, Active: r.Default})
+		m.text = append(m.text, r.Region)
+		m.nameW = max(m.nameW, ansi.StringWidth(r.Region))
+		if r.Default {
+			m.statusW = len(defaultTag)
+		}
 	}
 	m.filter()
 	return m
@@ -229,6 +249,9 @@ func (m *model) scroll() {
 
 // columns shrinks the name and region columns, widest first, to fit width w.
 func (m model) columns(w int) (nameW, regionW int) {
+	if m.regions {
+		return max(minCol, min(m.nameW, w-gutter-len(sep)-m.statusW)), 0
+	}
 	nameW, regionW = m.nameW, m.regionW
 	avail := w - gutter - 2*len(sep) - m.statusW
 	for nameW+regionW > avail {
@@ -283,6 +306,12 @@ func (m model) row(i int, selected bool, nameW, regionW int) string {
 	if it.Active {
 		mark = m.paint(sgrGreen, "●")
 	}
+	if m.regions {
+		if !it.Active {
+			return cur + mark + " " + m.paint(nameSGR, ansi.Truncate(it.Profile.Name, nameW, "…"))
+		}
+		return cur + mark + " " + m.cell(nameSGR, it.Profile.Name, nameW) + sep + m.paint(sgrGreen, defaultTag)
+	}
 	return cur + mark + " " + m.cell(nameSGR, it.Profile.Name, nameW) + sep +
 		m.cell("", region(it), regionW) + sep + m.paint(statusSGR(it), status(it))
 }
@@ -312,11 +341,17 @@ func (m model) View() string {
 	count := fmt.Sprintf("%d/%d", m.profiles(m.matches), m.profiles(all))
 	foot := fitFooter(w)
 	rowW := gutter + nameW + regionW + 2*len(sep) + m.statusW
-	panelW := min(w, max(rowW, ansi.StringWidth(foot), len(title)+1+len(count)))
+	header := pad(gutter) + m.cell("", "PROFILE", nameW) + sep + m.cell("", "REGION", regionW) + sep + "SESSION"
+	empty := noMatches
+	if m.regions {
+		rowW = gutter + nameW + len(sep) + m.statusW
+		header, empty = pad(gutter)+"REGION", noRegions
+	}
+	panelW := min(w, max(rowW, ansi.StringWidth(foot), ansi.StringWidth(m.title)+1+len(count)))
 
 	var b []string
 	if titled {
-		t := ansi.Truncate(title, max(0, panelW-len(count)-1), "…")
+		t := ansi.Truncate(m.title, max(0, panelW-len(count)-1), "…")
 		b = append(b, m.paint(sgrBold, t)+pad(panelW-ansi.StringWidth(t)-len(count))+m.paint(sgrDim, count))
 	}
 	switch {
@@ -327,8 +362,7 @@ func (m model) View() string {
 		b = append(b, m.paint(sgrAccent, ">")+" "+m.query+m.paint(sgrCaret, " "))
 	}
 	if chrome {
-		b = append(b, m.paint(sgrDim, pad(gutter)+m.cell("", "PROFILE", nameW)+sep+
-			m.cell("", "REGION", regionW)+sep+"SESSION"))
+		b = append(b, m.paint(sgrDim, header))
 	}
 	shift := 0
 	if m.noProfileMatch() {
@@ -338,7 +372,7 @@ func (m model) View() string {
 		j := m.offset + i - shift
 		switch {
 		case (len(m.matches) == 0 || shift == 1) && i == 0:
-			b = append(b, pad(gutter)+m.paint(sgrDim, noMatches))
+			b = append(b, pad(gutter)+m.paint(sgrDim, empty))
 		case j < len(m.matches):
 			b = append(b, m.row(m.matches[j], j == m.cursor && !m.parked, nameW, regionW))
 		default:

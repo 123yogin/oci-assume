@@ -15,9 +15,13 @@ const (
 )
 
 // Prompt formats the prompt text; a negative warnBelow marks an API-key profile.
-func Prompt(profile string, remaining, warnBelow time.Duration) (string, PromptState) {
+// override is a region that differs from the profile's own, or "".
+func Prompt(profile, override string, remaining, warnBelow time.Duration) (string, PromptState) {
 	if profile == "" {
 		return "", ""
+	}
+	if override != "" {
+		profile += " " + override
 	}
 	if warnBelow < 0 {
 		return profile, StateOK

@@ -1,24 +1,25 @@
 # Prompt
 
-`oci-assume prompt` prints the active profile and the time left on its session, for example `dev 42m` or `dev 1h05m`. It prints `dev expired` when the session is dead, just the profile name for API-key profiles, and nothing when no profile is active.
+`oci-assume prompt` prints the active profile and the time left on its session, for example `dev 42m` or `dev 1h05m`. It prints `dev expired` when the session is dead, just the profile name for API-key profiles, and nothing when no profile is active. When `OCI_CLI_REGION` differs from the profile's configured region (after `-r` or the region step), the region goes after the name: `prodcorp us-phoenix-1 52m`.
 
-It reads `OCI_CLI_PROFILE`, your OCI config and the token file. It never calls `oci` and makes no network calls of its own, so it is cheap enough to run on every prompt. It never fails: on any problem it prints nothing.
+It reads `OCI_CLI_PROFILE`, `OCI_CLI_REGION`, your OCI config and the token file. It never calls `oci` and makes no network calls of its own, so it is cheap enough to run on every prompt. It never fails: on any problem it prints nothing.
 
 Add `--json` for a machine-readable form:
 
 ```json
-{"profile":"dev","text":"dev 42m","state":"ok","remaining_seconds":2520}
+{"profile":"dev","text":"dev 42m","state":"ok","region":"us-ashburn-1","remaining_seconds":2520}
 ```
 
-`state` is `ok`, `warn` (under the refresh threshold, 10 minutes by default) or `expired`.
+`region` is the active region: `OCI_CLI_REGION` when set, else the profile's own. `state` is `ok`, `warn` (under the refresh threshold, 10 minutes by default) or `expired`.
 
-The shell hook from `oci-assume init` defines a helper that wraps this as `[oci dev 42m]` (or prints nothing). The snippets below use it. The helper calls `oci-assume prompt --tick`, which also refreshes a session that is about to expire (see [how it works](how-it-works.md#prompt-tick)); a prompt that calls plain `oci-assume prompt` only displays. The Starship and oh-my-posh snippets call `--tick` directly for the same reason.
+The shell hook from `oci-assume init` defines a helper that wraps this as `[oci dev 42m]`, or `[oci dev us-phoenix-1 42m]` with an overridden region (or prints nothing). The snippets below use it. The helper calls `oci-assume prompt --tick`, which also refreshes a session that is about to expire (see [how it works](how-it-works.md#prompt-tick)); a prompt that calls plain `oci-assume prompt` only displays. The Starship and oh-my-posh snippets call `--tick` directly for the same reason.
 
 ## zsh
 
 ```zsh
 setopt PROMPT_SUBST
 PROMPT='$(oci_assume_prompt) %~ %# '
+# [oci dev 42m] ~ %   or, after -r / the region step:   [oci dev us-phoenix-1 42m] ~ %
 ```
 
 ## bash

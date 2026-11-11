@@ -47,6 +47,18 @@ oci-assume norgn </dev/null 2>/dev/null
 check "b2 rc" 0 $status
 check "b2 region unset" unset (val OCI_CLI_REGION)
 
+# b3
+oci-assume -r us-phoenix-1 dev </dev/null 2>/dev/null
+check "b3 rc" 0 $status
+check "b3 region" us-phoenix-1 "$OCI_CLI_REGION"
+set p (oci_assume_prompt)
+if test "$p" = "[oci dev us-phoenix-1 59m]"; or test "$p" = "[oci dev us-phoenix-1 60m]"
+    echo "ok   b3 prompt"
+else
+    echo "FAIL b3 prompt: [$p]"
+    set fails (math $fails + 1)
+end
+
 # c
 oci-assume apikey </dev/null 2>/dev/null
 check "c rc" 0 $status

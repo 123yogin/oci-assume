@@ -22,7 +22,7 @@ import (
 
 var (
 	ErrNoTTY     = errors.New("no terminal available for the profile picker")
-	ErrCancelled = errors.New("profile selection cancelled")
+	ErrCancelled = errors.New("selection cancelled")
 	// ErrNewProfile means the user chose the "+ New profile…" row.
 	ErrNewProfile = errors.New("new profile requested")
 )
@@ -90,14 +90,33 @@ func colorEnabled() bool {
 	return t != "dumb" && (t != "" || runtime.GOOS == "windows")
 }
 
+// RegionItem is one row of the region step.
+type RegionItem struct {
+	Region  string
+	Default bool // the profile's configured region
+}
+
 // Pick shows the picker inline on the controlling terminal, never stdout,
 // and returns the chosen profile name.
-func Pick(items []Item, in *os.File) (name string, err error) {
-	if in == nil || !isTerminal(in) {
-		return "", ErrNoTTY
-	}
+func Pick(items []Item, in *os.File) (string, error) {
 	if len(items) == 0 {
 		return "", errors.New("no profiles to pick from")
+	}
+	return run(in, func() model { return newModel(items, colorEnabled()) })
+}
+
+// PickRegion shows the region step for profile and returns the chosen region, in the given order.
+func PickRegion(profile string, items []RegionItem, in *os.File) (string, error) {
+	if len(items) == 0 {
+		return "", errors.New("no regions to pick from")
+	}
+	return run(in, func() model { return newRegionModel(profile, items, colorEnabled()) })
+}
+
+// run draws the model on the terminal until a choice or cancel.
+func run(in *os.File, mk func() model) (name string, err error) {
+	if in == nil || !isTerminal(in) {
+		return "", ErrNoTTY
 	}
 	c, err := openTTY()
 	if err != nil {
@@ -107,7 +126,7 @@ func Pick(items []Item, in *os.File) (name string, err error) {
 	stop := func() {}
 	defer func() {
 		if r := recover(); r != nil {
-			name, err = "", fmt.Errorf("profile picker crashed: %v", r)
+			name, err = "", fmt.Errorf("picker crashed: %v", r)
 		}
 		s.clear()
 		_ = c.Close()
@@ -115,7 +134,7 @@ func Pick(items []Item, in *os.File) (name string, err error) {
 	}()
 	var sigs <-chan os.Signal
 	sigs, stop = notify()
-	s.m = newModel(items, colorEnabled())
+	s.m = mk()
 	return s.run(sigs)
 }
 
