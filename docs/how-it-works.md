@@ -10,9 +10,9 @@ A child process cannot change its parent shell's environment. So `oci-assume ini
 
 The binary prints plain `export` / `unset` lines (or the fish and PowerShell equivalents), quoted for the target shell. The `init` output itself is static and contains no user data.
 
-Some subcommands are passed straight through to the binary without eval: `status`, `refresh`, `login`, `prompt`, `daemon`, `init`, `doctor`, `setup`, `uninstall`, `version`, `help`, `completion`, `__complete`, `--help`, `-h` and `--version`.
+Some subcommands are passed straight through to the binary without eval: `status`, `refresh`, `login`, `prompt`, `daemon`, `init`, `doctor`, `setup`, `uninstall`, `version`, `help`, `completion`, `__complete`, `__completeNoDesc`, `--help`, `-h` and `--version`.
 
-Because `__complete` is passed through too, tab completion works through the hook, including region names for `-r`/`--region`. Those come from your config file, `$OCI_CLI_REGION` and a built-in list of OCI commercial regions; completion never runs `oci`.
+Because `__complete` is passed through too, tab completion works through the hook: profile names for the argument and region names for `-r`/`--region`. Those come from your config file, `$OCI_CLI_REGION` and a built-in list of OCI commercial regions; completion never runs `oci`.
 
 The hook also defines a prompt helper (`oci_assume_prompt` in zsh, bash and fish; `OciAssumePrompt` in PowerShell). See [prompt.md](prompt.md).
 
@@ -20,13 +20,13 @@ The hook also defines a prompt helper (`oci_assume_prompt` in zsh, bash and fish
 
 After you pick a profile from the picker, a second picker on the same terminal asks for the region:
 
-- the profile's own region comes first, marked `● default`; Enter on it keeps the profile's region, as before;
+- the profile's own region comes first, marked `● default` (`(none)` for a profile without one); Enter on it keeps the profile's region, as before;
 - then the regions of your other profiles and `$OCI_CLI_REGION`, then a built-in, static list of OCI commercial regions, without duplicates;
 - type to filter; Esc cancels the whole assume (exit 1, nothing exported).
 
-The chosen region is handled exactly like `-r`: it must match `^[a-z0-9-]+$`, an interactive login uses it (`--region`), and it is exported as `OCI_CLI_REGION`.
+The chosen region is handled exactly like `-r`: it must match `^[a-z0-9-]+$` and is exported as `OCI_CLI_REGION`. A browser login still uses the profile's configured region, so `oci` never rewrites the profile's `region=`; the override only affects what is exported.
 
-The step is skipped when you pass `-r`, when you name the profile on the command line (so scripts never block), when there is no terminal, and after `+ New profile…` (the login already asked). `-R`/`--pick-region` shows it for a named profile too; without a terminal that is a config error (exit 4).
+The step is skipped when you pass `-r`, when you name the profile on the command line (so scripts never block), when there is no terminal, after `+ New profile…` (the login already asked, even with `-R`), and when the configured region is invalid (that still fails with exit 4). Keys typed ahead of the region step are kept. `-R`/`--pick-region` shows it for a named profile too; without a terminal that is a config error (exit 4).
 
 When `$OCI_CLI_REGION` differs from the active profile's configured region, `prompt` shows it (`prodcorp us-phoenix-1 52m`) and `status` marks it on the active row (`us-phoenix-1 (override)`).
 

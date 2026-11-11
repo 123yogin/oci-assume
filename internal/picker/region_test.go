@@ -88,3 +88,41 @@ func TestPickRegionNoTTY(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestRegionNoneRow(t *testing.T) {
+	m := newRegionModel("norgn", []RegionItem{{Default: true}, {Region: "us-ashburn-1"}}, false)
+	m.resize(100, 40)
+	if v := m.View(); !strings.Contains(v, ">● (none)") {
+		t.Fatalf("view:\n%s", v)
+	}
+	if !m.update(key(keyEnter)) || m.choice != "" || m.cancelled {
+		t.Fatalf("choice %q", m.choice)
+	}
+}
+
+// Keys typed past the profile choice reach the region step.
+func TestTypeaheadCarriesToNextPicker(t *testing.T) {
+	c := &fakeConsole{chunks: []string{"dev\r\r"}, w: 100, h: 40, panicAt: -1}
+	fakeTerminal(t, c)
+	if name, err := Pick(fixture(), os.Stdin); err != nil || name != "dev" {
+		t.Fatalf("Pick = %q, %v", name, err)
+	}
+	c2 := &fakeConsole{w: 100, h: 40, panicAt: -1}
+	fakeTerminal(t, c2)
+	if r, err := PickRegion("dev", regionFixture(), os.Stdin); err != nil || r != "us-phoenix-1" {
+		t.Fatalf("PickRegion = %q, %v", r, err)
+	}
+}
+
+func TestTypeaheadDroppedOnCancel(t *testing.T) {
+	c := &fakeConsole{chunks: []string{"\x03\r"}, w: 100, h: 40, panicAt: -1}
+	fakeTerminal(t, c)
+	if _, err := Pick(fixture(), os.Stdin); !errors.Is(err, ErrCancelled) {
+		t.Fatalf("got %v", err)
+	}
+	c2 := &fakeConsole{w: 100, h: 40, panicAt: -1}
+	fakeTerminal(t, c2)
+	if _, err := PickRegion("dev", regionFixture(), os.Stdin); !errors.Is(err, ErrCancelled) {
+		t.Fatalf("stale keys reached the next picker: %v", err)
+	}
+}

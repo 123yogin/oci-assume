@@ -12,13 +12,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Region step: after you pick a profile, a second picker offers the profile's own region (`● default`, Enter keeps it), then regions from your other profiles and `$OCI_CLI_REGION`, then every OCI commercial region. Type to filter; Esc cancels the assume. Skipped with `-r`, a named profile, no terminal, or a new profile.
 - `-R`/`--pick-region` shows the region step for a named profile; without a terminal it exits 4.
-- Tab completion for `-r`/`--region`, config regions first. It never runs `oci`.
+- Tab completion for `-r`/`--region` (config regions first) and for profile names. It never runs `oci`.
 - `prompt` shows an overridden region (`prodcorp us-phoenix-1 52m`), and `prompt --json` has a `region` field.
 - `status` marks an overridden region on the active profile (`us-phoenix-1 (override)`); `status --json` adds `region_override`.
 
 ### Changed
 
-- Cancelling a picker now reports `selection cancelled` instead of `profile selection cancelled`.
+- The prompt text includes the region when `OCI_CLI_REGION` differs from the profile's configured region (`prodcorp us-phoenix-1 52m` instead of `prodcorp 52m`).
+- A region override (`-r` or the region step) is only exported; a browser login uses the profile's configured region, so `oci` never rewrites `region=` in your config.
+- Cancelling a picker now reports `selection cancelled` instead of `profile selection cancelled`; with no terminal, `no terminal available for the picker`.
 
 ## [1.1.1] - 2026-10-23
 

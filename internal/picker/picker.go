@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	ErrNoTTY     = errors.New("no terminal available for the profile picker")
+	ErrNoTTY     = errors.New("no terminal available for the picker")
 	ErrCancelled = errors.New("selection cancelled")
 	// ErrNewProfile means the user chose the "+ New profile…" row.
 	ErrNewProfile = errors.New("new profile requested")
@@ -92,8 +92,14 @@ func colorEnabled() bool {
 
 // RegionItem is one row of the region step.
 type RegionItem struct {
-	Region  string
-	Default bool // the profile's configured region
+	Region  string // "" is the "(none)" row of a profile without a region
+	Default bool   // the profile's configured region
+}
+
+// typeahead holds keys read past a choice, so the next picker in this process gets them.
+var typeahead struct {
+	keys    []keyEvent
+	pending []byte
 }
 
 // Pick shows the picker inline on the controlling terminal, never stdout,
@@ -149,7 +155,14 @@ func (s *screen) run(sigs <-chan os.Signal) (string, error) {
 	s.fit()
 	s.draw()
 	buf := make([]byte, 256)
-	var pending []byte
+	carried, pending := typeahead.keys, typeahead.pending
+	typeahead.keys, typeahead.pending = nil, nil
+	if len(carried) > 0 {
+		if done, name, err := s.apply(carried, pending); done {
+			return name, err
+		}
+		s.draw()
+	}
 	for {
 		select {
 		case sig := <-sigs:
@@ -170,22 +183,31 @@ func (s *screen) run(sigs <-chan os.Signal) (string, error) {
 		} else if keys, pending = feed(pending, buf[:n]); !s.c.Polls() && len(pending) == 1 && pending[0] == 0x1b {
 			keys, pending = append(keys, flush(pending)...), nil // no timeout will come to flush it
 		}
-		for _, k := range keys {
-			if s.m.update(k) {
-				if s.m.cancelled {
-					return "", ErrCancelled
-				}
-				if s.m.newProfile {
-					return "", ErrNewProfile
-				}
-				return s.m.choice, nil
-			}
-			dirty = true
+		if done, name, err := s.apply(keys, pending); done {
+			return name, err
 		}
-		if dirty {
+		if dirty || len(keys) > 0 {
 			s.draw()
 		}
 	}
+}
+
+// apply feeds keys to the model; on a choice, the unused keys and pending bytes carry over.
+func (s *screen) apply(keys []keyEvent, pending []byte) (done bool, name string, err error) {
+	for i, k := range keys {
+		if !s.m.update(k) {
+			continue
+		}
+		switch {
+		case s.m.cancelled:
+			return true, "", ErrCancelled
+		case s.m.newProfile:
+			return true, "", ErrNewProfile
+		}
+		typeahead.keys, typeahead.pending = append([]keyEvent(nil), keys[i+1:]...), pending
+		return true, s.m.choice, nil
+	}
+	return false, "", nil
 }
 
 // fit picks up a terminal resize and reports whether it changed.

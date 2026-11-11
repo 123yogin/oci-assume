@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -57,15 +58,88 @@ func TestRegionStepDefaultRowKeepsProfileRegion(t *testing.T) {
 	}
 }
 
-func TestRegionStepFlowsToAuthenticate(t *testing.T) {
+// An override is only exported; login keeps the config region so oci never rewrites region=.
+func TestOverrideNeverReachesAuthenticate(t *testing.T) {
+	for name, args := range map[string][]string{"region step": nil, "-r": {"-r", "eu-frankfurt-1", "dev"}} {
+		t.Run(name, func(t *testing.T) {
+			e := setup(t, "ok")
+			e.token(-time.Minute)
+			e.tty, e.pickName, e.regionName = true, "dev", "eu-frankfurt-1"
+			if code := e.eval(args...); code != 0 {
+				t.Fatalf("exit %d: %s", code, e.stderr.String())
+			}
+			calls := e.calls()
+			if !strings.Contains(calls, "session authenticate") || !strings.Contains(calls, "--region us-phoenix-1") || strings.Contains(calls, "eu-frankfurt-1") {
+				t.Fatalf("oci calls %q", calls)
+			}
+			if !strings.Contains(e.stdout.String(), "OCI_CLI_REGION='eu-frankfurt-1'") {
+				t.Fatalf("stdout %q", e.stdout.String())
+			}
+		})
+	}
+}
+
+// writeConfig replaces the test config with body.
+func writeConfig(t *testing.T, body string) {
+	t.Helper()
+	if err := os.WriteFile(os.Getenv("OCI_CLI_CONFIG_FILE"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRegionStepNoneRowForRegionlessProfile(t *testing.T) {
 	e := setup(t, "ok")
-	e.token(-time.Minute)
-	e.tty, e.pickName, e.regionName = true, "dev", "eu-frankfurt-1"
+	e.token(time.Hour)
+	writeConfig(t, "[norgn]\nsecurity_token_file="+e.tokPath+"\n[other]\nregion=us-ashburn-1\nkey_file=/k\n")
+	e.tty, e.pickName = true, "norgn"
 	if code := e.eval(); code != 0 {
 		t.Fatalf("exit %d: %s", code, e.stderr.String())
 	}
-	if !strings.Contains(e.calls(), "--region eu-frankfurt-1") {
-		t.Fatalf("oci calls %q", e.calls())
+	if len(e.regionItems) < 2 || e.regionItems[0] != (picker.RegionItem{Region: "", Default: true}) || e.regionItems[1].Region != "us-ashburn-1" {
+		t.Fatalf("rows %v", e.regionItems[:min(3, len(e.regionItems))])
+	}
+	if !strings.Contains(e.stdout.String(), "unset OCI_CLI_REGION") {
+		t.Fatalf("stdout %q", e.stdout.String())
+	}
+}
+
+func TestRegionStepSkippedForInvalidConfigRegion(t *testing.T) {
+	e := setup(t, "ok")
+	e.token(time.Hour)
+	writeConfig(t, "[bad]\nregion=Bad Region\nsecurity_token_file="+e.tokPath+"\n")
+	e.tty, e.pickName = true, "bad"
+	if code := e.eval(); code != 4 || e.stdout.Len() != 0 || e.regionItems != nil {
+		t.Fatalf("exit %d stdout %q step ran %v", code, e.stdout.String(), e.regionItems != nil)
+	}
+}
+
+func TestRegionStepSkippedAfterNewProfile(t *testing.T) {
+	for name, args := range map[string][]string{"bare": nil, "-R": {"-R"}} {
+		t.Run(name, func(t *testing.T) {
+			e := setup(t, "ok")
+			e.token(time.Hour)
+			e.tty = true
+			pick := func([]picker.Item, *os.File) (string, error) { return "", picker.ErrNewProfile }
+			code, _ := runLogin(t, e, os.Getenv("OCI_CLI_CONFIG_FILE"), "newp\n\n", pick, args...)
+			if code != 0 || e.regionItems != nil {
+				t.Fatalf("exit %d step ran %v stderr %q", code, e.regionItems != nil, e.stderr.String())
+			}
+		})
+	}
+}
+
+func TestProfileCompletion(t *testing.T) {
+	e := setup(t, "ok")
+	if code := e.run("__complete", "-R", "d"); code != 0 {
+		t.Fatalf("exit %d: %s", code, e.stderr.String())
+	}
+	if out := e.stdout.String(); !strings.HasPrefix(out, "dev\n") || strings.Contains(out, "prod-admin") {
+		t.Fatalf("completion %q", out)
+	}
+	// Bare: subcommands and profile names together.
+	e.run("__complete", "d")
+	if out := e.stdout.String(); !strings.Contains(out, "dev\n") || !strings.Contains(out, "daemon") {
+		t.Fatalf("bare completion %q", out)
 	}
 }
 

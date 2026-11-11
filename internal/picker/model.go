@@ -18,6 +18,7 @@ const (
 	placeholder = "type to filter"
 	noMatches   = "no matching profiles"
 	noRegions   = "no matching regions"
+	noneLabel   = "(none)"
 	defaultTag  = "default"
 	newLabel    = "+ New profile…"
 	maxRows     = 10
@@ -91,14 +92,21 @@ func newRegionModel(profile string, items []RegionItem, color bool) model {
 	m := model{color: color, title: "Select a region for " + profile, regions: true, nameW: len("REGION")}
 	for _, r := range items {
 		m.items = append(m.items, Item{Profile: ociconfig.Profile{Name: r.Region}, Active: r.Default})
-		m.text = append(m.text, r.Region)
-		m.nameW = max(m.nameW, ansi.StringWidth(r.Region))
+		m.text = append(m.text, regionLabel(r.Region))
+		m.nameW = max(m.nameW, ansi.StringWidth(regionLabel(r.Region)))
 		if r.Default {
 			m.statusW = len(defaultTag)
 		}
 	}
 	m.filter()
 	return m
+}
+
+func regionLabel(r string) string {
+	if r == "" {
+		return noneLabel
+	}
+	return r
 }
 
 func region(it Item) string {
@@ -308,9 +316,9 @@ func (m model) row(i int, selected bool, nameW, regionW int) string {
 	}
 	if m.regions {
 		if !it.Active {
-			return cur + mark + " " + m.paint(nameSGR, ansi.Truncate(it.Profile.Name, nameW, "…"))
+			return cur + mark + " " + m.paint(nameSGR, ansi.Truncate(regionLabel(it.Profile.Name), nameW, "…"))
 		}
-		return cur + mark + " " + m.cell(nameSGR, it.Profile.Name, nameW) + sep + m.paint(sgrGreen, defaultTag)
+		return cur + mark + " " + m.cell(nameSGR, regionLabel(it.Profile.Name), nameW) + sep + m.paint(sgrGreen, defaultTag)
 	}
 	return cur + mark + " " + m.cell(nameSGR, it.Profile.Name, nameW) + sep +
 		m.cell("", region(it), regionW) + sep + m.paint(statusSGR(it), status(it))

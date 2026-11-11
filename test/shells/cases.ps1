@@ -40,6 +40,11 @@ $p = OciAssumePrompt
 if ($p -ceq '[oci dev us-phoenix-1 59m]' -or $p -ceq '[oci dev us-phoenix-1 60m]') { Write-Host 'ok   b3 prompt' }
 else { Write-Host "FAIL b3 prompt: [$p]"; $script:fails++ }
 
+# b4
+$LASTEXITCODE = 99; oci-assume norgn 2>$null
+Check 'b4 rc' 0 $LASTEXITCODE
+Check 'b4 region unset' 'unset' (Val 'OCI_CLI_REGION')
+
 # c
 $LASTEXITCODE = 99; oci-assume apikey 2>$null
 Check 'c rc' 0 $LASTEXITCODE

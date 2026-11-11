@@ -78,7 +78,7 @@ Sessions stay fresh in the background; you only log in through the browser again
 |---|---|
 | `oci-assume [profile]` | Pick a profile (or name one), make sure its session is valid, and set the OCI variables in this shell. After the picker, a region step lists the profile's own region first (`● default`; Enter keeps it), then regions from your other profiles and `$OCI_CLI_REGION`, then every OCI commercial region. Type to filter; Esc cancels. A named profile skips it. |
 | `oci-assume -r <region> [profile]` | Same, overriding the profile's region and skipping the region step. Tab completes the region (`-r us-<Tab>`). |
-| `oci-assume -R <profile>` | Show the region step for a named profile too (`--pick-region`). Needs a terminal (exit 4 without one). |
+| `oci-assume -R <profile>` | Show the region step for a named profile too (`--pick-region`). Needs a terminal (exit 4 without one). Tab completes profile names. |
 | `oci-assume --unset` | Clear `OCI_CLI_PROFILE`, `OCI_CLI_AUTH` and `OCI_CLI_REGION`. |
 | `eval "$(oci-assume --shell bash <profile>)"` | Use from a script, without the hook. `--shell` takes `zsh`, `bash`, `fish` or `pwsh`. |
 | `oci-assume status [--json]` | Show every profile's region and session expiry. An overridden region on the active profile shows as `us-phoenix-1 (override)`. |

@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -256,5 +257,31 @@ func TestRegionStepEscCancelsOnRealPty(t *testing.T) {
 	}
 	if out := buf.String(); strings.Contains(out, "export ") {
 		t.Errorf("cancelled region step exported: %q", out)
+	}
+}
+
+// Keys typed ahead of the region step, in one write, still reach it.
+func TestTypeaheadReachesRegionStepOnRealPty(t *testing.T) {
+	bin, env := build(t), testEnv(t)
+	var cfg string
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, "OCI_CLI_CONFIG_FILE="); ok {
+			cfg = v
+		}
+	}
+	pl := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"exp":%d}`, time.Now().Add(time.Hour).Unix())))
+	if err := os.WriteFile(filepath.Join(filepath.Dir(cfg), "tok"), []byte("aGVhZA."+pl+".c2ln"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd, f, buf := start(t, bin, env, "--shell", "zsh")
+	waitFor(t, buf, "esc cancel")
+	if _, err := f.Write([]byte("dev\r\r")); err != nil {
+		t.Fatal(err)
+	}
+	if err := finish(t, cmd, buf, 3*time.Second); err != nil {
+		t.Fatalf("exit %v; output %q", err, buf.String())
+	}
+	if out := buf.String(); !strings.Contains(out, "OCI_CLI_PROFILE='dev'") || !strings.Contains(out, "OCI_CLI_REGION='us-phoenix-1'") {
+		t.Errorf("typeahead lost: %q", out)
 	}
 }

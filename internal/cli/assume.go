@@ -48,9 +48,7 @@ func runAssume(ctx context.Context, d *deps, f *flags, args []string) error {
 		return cfgErrorf("-R/--pick-region needs a terminal; pass -r <region> instead")
 	}
 	ps, err := loadProfiles()
-	name, fresh := "", false
-	// The region step follows the picker, never a named profile (scripts must not block), unless -R.
-	regionStep := f.pickRegion
+	name, fresh, picked := "", false, false
 	switch {
 	case err != nil && (len(args) == 1 || !errors.Is(err, ociconfig.ErrNotFound)):
 		return err
@@ -63,20 +61,25 @@ func runAssume(ctx context.Context, d *deps, f *flags, args []string) error {
 		if ps, err = loadProfiles(); err != nil {
 			return err
 		}
-		regionStep = regionStep || (!fresh && f.region == "" && d.isTTY())
+		picked = true
 	}
 	p, err := findProfile(ps, name)
 	if err != nil {
 		return err
 	}
+	// The region step follows the picker, never a named profile (scripts must not block), unless -R.
+	// A new profile's login already asked; an invalid config region is left for Validate to reject.
+	regionStep := !fresh && (f.pickRegion || (picked && f.region == "" && d.isTTY())) &&
+		shell.Validate(shell.Env{Region: p.Region}) == nil
+	region := p.Region
 	if f.region != "" {
-		p.Region = f.region
+		region = f.region
 	} else if regionStep {
-		if p.Region, err = chooseRegion(d, ps, p); err != nil {
+		if region, err = chooseRegion(d, ps, p); err != nil {
 			return err
 		}
 	}
-	env := shell.Env{Profile: p.Name, Region: p.Region, Session: p.IsSession()}
+	env := shell.Env{Profile: p.Name, Region: region, Session: p.IsSession()}
 	if err := shell.Validate(env); err != nil {
 		return asConfig(err)
 	}
@@ -100,6 +103,8 @@ func runAssume(ctx context.Context, d *deps, f *flags, args []string) error {
 		fmt.Fprintf(d.stderr, "oci-assume: warning: could not record state: %v\n", err)
 	}
 	fmt.Fprint(d.stdout, shell.Export(sh, env))
+	// Login above used the config region (oci rewrites region= otherwise); the override is export-only.
+	p.Region = region
 	fmt.Fprintln(d.stderr, humanLine(p, action, d))
 	return nil
 }
@@ -130,12 +135,13 @@ func pickOrLogin(ctx context.Context, d *deps, ps []ociconfig.Profile, loadErr e
 	return name, false, err
 }
 
-// chooseRegion runs the region step; the default row returns the profile's own region.
+// chooseRegion runs the region step; the default row (first, "(none)" when empty) returns p's own region.
 func chooseRegion(d *deps, ps []ociconfig.Profile, p ociconfig.Profile) (string, error) {
-	names := candidateRegions(ps, p.Region)
-	items := make([]picker.RegionItem, len(names))
-	for i, r := range names {
-		items[i] = picker.RegionItem{Region: r, Default: r == p.Region}
+	items := []picker.RegionItem{{Region: p.Region, Default: true}}
+	for _, r := range candidateRegions(ps, p.Region) {
+		if r != p.Region {
+			items = append(items, picker.RegionItem{Region: r})
+		}
 	}
 	r, err := d.pickRegion(p.Name, items, d.stdin)
 	if errors.Is(err, picker.ErrNoTTY) {
@@ -167,6 +173,21 @@ func completeRegion(_ *cobra.Command, _ []string, prefix string) ([]string, cobr
 	for _, r := range candidateRegions(ps, "") {
 		if strings.HasPrefix(r, prefix) {
 			out = append(out, r)
+		}
+	}
+	return out, cobra.ShellCompDirectiveNoFileComp
+}
+
+// completeProfile completes the profile argument (and -R's) from the config file.
+func completeProfile(_ *cobra.Command, args []string, prefix string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	ps, _ := ociconfig.Load(ociconfig.DefaultPath())
+	var out []string
+	for _, p := range ps {
+		if strings.HasPrefix(p.Name, prefix) {
+			out = append(out, p.Name)
 		}
 	}
 	return out, cobra.ShellCompDirectiveNoFileComp

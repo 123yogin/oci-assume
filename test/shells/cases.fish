@@ -59,6 +59,11 @@ else
     set fails (math $fails + 1)
 end
 
+# b4
+oci-assume norgn </dev/null 2>/dev/null
+check "b4 rc" 0 $status
+check "b4 region unset" unset (val OCI_CLI_REGION)
+
 # c
 oci-assume apikey </dev/null 2>/dev/null
 check "c rc" 0 $status

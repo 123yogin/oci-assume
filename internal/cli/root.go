@@ -166,12 +166,13 @@ type flags struct {
 func newRoot(d *deps) *cobra.Command {
 	f := &flags{}
 	root := &cobra.Command{
-		Use:           "oci-assume [profile]",
-		Short:         "Switch OCI CLI profiles and keep session tokens fresh",
-		Args:          cobra.MaximumNArgs(1),
-		SilenceErrors: true,
-		SilenceUsage:  true,
-		Version:       versionString(),
+		Use:               "oci-assume [profile]",
+		Short:             "Switch OCI CLI profiles and keep session tokens fresh",
+		Args:              cobra.MaximumNArgs(1),
+		SilenceErrors:     true,
+		SilenceUsage:      true,
+		Version:           versionString(),
+		ValidArgsFunction: completeProfile,
 		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
 			selfHeal(d, cmd)
 		},
