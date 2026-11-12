@@ -5,7 +5,7 @@ go 1.27
 require (
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/creack/pty v1.1.24
-	github.com/gofrs/flock v0.13.1
+	github.com/gofrs/flock v0.13.2
 	github.com/sahilm/fuzzy v0.1.3
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/sys v0.49.0
