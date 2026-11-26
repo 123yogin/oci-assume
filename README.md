@@ -151,3 +151,5 @@ Issues and pull requests are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+Built by [Yogin Parmar](https://github.com/123yogin), who also builds [DailyBudget](https://dailybudget.dpdns.org), a privacy-first budgeting app with no internet permission.
