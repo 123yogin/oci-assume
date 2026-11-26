@@ -3,7 +3,7 @@ module github.com/123yogin/oci-assume
 go 1.27
 
 require (
-	github.com/charmbracelet/x/ansi v0.11.9
+	github.com/charmbracelet/x/ansi v0.11.10
 	github.com/creack/pty v1.1.24
 	github.com/gofrs/flock v0.13.1
 	github.com/sahilm/fuzzy v0.1.3
