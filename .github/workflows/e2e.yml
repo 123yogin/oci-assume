@@ -73,7 +73,7 @@ jobs:
           ref: ${{ needs.resolve.outputs.tag }}
           path: tagsrc
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: tagsrc/go.mod
       - name: 0 prepare (fake oci on PATH, ~/.oci/config, seeded token)
@@ -127,7 +127,7 @@ jobs:
           ref: ${{ needs.resolve.outputs.tag }}
           path: tagsrc
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: tagsrc/go.mod
       - name: 0 prepare (fake oci on PATH, ~/.oci/config, seeded token)
@@ -178,7 +178,7 @@ jobs:
           ref: ${{ needs.resolve.outputs.tag }}
           path: tagsrc
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: tagsrc/go.mod
       - name: 0 prepare (fake oci on PATH, ~/.oci/config, seeded token)
@@ -248,7 +248,7 @@ jobs:
     env:
       E2E_VERSION: ${{ needs.resolve.outputs.tag }}
     steps:
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version: stable
           cache: false
